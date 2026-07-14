@@ -4,7 +4,7 @@
 
 ## 演示视频
 
-[[![观看 SAT + GRE Word Galaxy 动态演示视频](lexiverse-dynamic-demo-cover.png)](https://raw.githubusercontent.com/kylewang20100119-coder/sat-word-galaxy/main/lexiverse-dynamic-demo.mp4)](https://github.com/user-attachments/assets/9245490c-0150-4aaf-866c-27a46aad44ab)
+[[![观看 SAT + GRE Word Galaxy 动态演示视频](lexiverse-dynamic-demo-cover.png)](https://github.com/user-attachments/assets/9245490c-0150-4aaf-866c-27a46aad44ab)]
 点击封面观看 45 秒动态演示：伴随舒缓的星空氛围音乐，真实展示单词点击与星系重排、搜索、页面浏览、Digital SAT 训练和熟悉度复习。
 
 ## 在 VS Code 中运行
