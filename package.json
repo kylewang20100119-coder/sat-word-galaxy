@@ -1,0 +1,10 @@
+{
+  "name": "sat-word-galaxy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "python3 -m http.server ${PORT:-8000}",
+    "dev:api": "python3 server.py"
+  }
+}

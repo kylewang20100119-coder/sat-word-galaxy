@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="SAT + GRE Word Galaxy - 用星系关系图记忆高频高难词汇">
+  <title>SAT + GRE Word Galaxy</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=Manrope:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css?v=20260714-practice-history">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="SAT + GRE Word Galaxy 首页">
+        <span class="brand-mark" aria-hidden="true"><span></span></span>
+        <span>LEXI<span>VERSE</span></span>
+      </a>
+
+      <label class="search-box" for="word-search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m2.35-5.15a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/></svg>
+        <input id="word-search" type="search" placeholder="搜索单词，如 benevolent" autocomplete="off">
+        <kbd>⌘ K</kbd>
+        <div id="search-results" class="search-results" role="listbox" hidden></div>
+      </label>
+
+      <div class="header-actions">
+        <a class="prep-link" href="#prep-lab">备考训练</a>
+        <button id="random-word" class="icon-button" type="button" aria-label="随机漫游" title="随机漫游">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+        </button>
+        <button id="theme-toggle" class="icon-button" type="button" aria-label="切换主题" title="切换主题">
+          <svg class="moon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/></svg>
+          <svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <section class="galaxy-panel" aria-label="单词关系星系">
+        <div class="galaxy-heading">
+          <div>
+            <p class="eyebrow"><span></span> YOUR WORD UNIVERSE</p>
+            <h1>Explore the galaxy of <em>meaning.</em></h1>
+          </div>
+          <p class="galaxy-caption">点击单词探索关联，滚轮缩放，拖动浏览</p>
+        </div>
+
+        <div class="relation-toolbar" aria-label="关系筛选">
+          <span>显示关系</span>
+          <label class="relation-chip synonym"><input type="checkbox" value="synonym" checked><i></i> 同义词</label>
+          <label class="relation-chip antonym"><input type="checkbox" value="antonym" checked><i></i> 反义词</label>
+          <label class="relation-chip etymology"><input type="checkbox" value="etymology" checked><i></i> 词源</label>
+          <label class="relation-chip prefix"><input type="checkbox" value="prefix" checked><i></i> 前缀</label>
+          <div class="catalog-control" role="group" aria-label="考试词库">
+            <button type="button" data-catalog="all" aria-pressed="true">全部</button>
+            <button type="button" data-catalog="sat" aria-pressed="false">SAT</button>
+            <button type="button" data-catalog="gre" aria-pressed="false">GRE</button>
+            <button type="button" data-catalog="overlap" aria-pressed="false">SAT + GRE</button>
+          </div>
+          <div class="density-control" role="group" aria-label="星系密度">
+            <button type="button" data-density="compact" aria-pressed="true">精简</button>
+            <button type="button" data-density="standard" aria-pressed="false">标准</button>
+            <button type="button" data-density="rich" aria-pressed="false">丰富</button>
+          </div>
+          <button id="center-view" class="tool-button" type="button">回到中心</button>
+        </div>
+
+        <div id="galaxy-stage" class="galaxy-stage">
+          <canvas id="galaxy-canvas" aria-label="可交互的 SAT 与 GRE 单词关系网络"></canvas>
+          <div class="stars" aria-hidden="true"></div>
+          <div class="zoom-controls" aria-label="缩放控制">
+            <button id="zoom-in" type="button" aria-label="放大">+</button>
+            <button id="zoom-out" type="button" aria-label="缩小">−</button>
+          </div>
+          <p id="network-status" class="network-status" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <aside id="word-detail" class="word-detail" aria-live="polite"></aside>
+
+      <section id="prep-lab" class="prep-lab" aria-labelledby="prep-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow"><span></span> ADAPTIVE SAT PRACTICE</p>
+            <h2 id="prep-title">新版 Digital SAT 离线模拟训练</h2>
+          </div>
+          <p>按新版 SAT 的短文本单题结构，从原创题库中匹配你的薄弱词汇，不调用 API。</p>
+        </div>
+
+        <div class="prep-workspace">
+          <form id="passage-form" class="generator-controls">
+            <div class="control-block">
+              <span class="control-title">SAT Group 范围</span>
+              <div class="range-fields">
+                <label>从<select id="passage-group-start"></select></label>
+                <label>到<select id="passage-group-end"></select></label>
+              </div>
+            </div>
+            <fieldset class="control-block familiarity-filter">
+              <legend class="control-title">熟悉度</legend>
+              <div class="level-checks">
+                <label><input type="checkbox" value="1" checked><span>1</span></label>
+                <label><input type="checkbox" value="2" checked><span>2</span></label>
+                <label><input type="checkbox" value="3"><span>3</span></label>
+                <label><input type="checkbox" value="4"><span>4</span></label>
+                <label><input type="checkbox" value="5"><span>5</span></label>
+              </div>
+            </fieldset>
+            <div class="control-grid">
+              <label>每题重点词<select id="passage-word-count"><option value="2">2 个</option><option value="3" selected>3 个</option><option value="4">4 个</option></select></label>
+              <label>难度<select id="passage-difficulty"><option value="standard">中高难度</option><option value="hard" selected>高难度</option></select></label>
+              <label>文章类型<select id="passage-genre"><option value="science">自然科学</option><option value="social">社会科学</option><option value="humanities">人文研究</option><option value="literary">文学叙事</option></select></label>
+            </div>
+            <label class="meaning-toggle" for="show-word-meanings">
+              <input id="show-word-meanings" type="checkbox" checked>
+              <span>显示目标词中文意思</span>
+            </label>
+            <div id="passage-pool-status" class="pool-status" aria-live="polite"></div>
+            <button id="generate-passage" class="primary-button generate-button" type="submit">抽取一道新版 SAT 模拟题</button>
+            <p id="api-status" class="api-status ready" aria-live="polite">离线原创题库 · 不调用 API · 不产生 API 费用</p>
+          </form>
+
+          <article id="passage-output" class="passage-output" aria-live="polite">
+            <div class="empty-practice">
+              <span>01</span>
+              <h3>你的针对性文章会出现在这里</h3>
+              <p>系统会按照 Group、熟悉度、学科与难度匹配短文本单题，并优先避开近期做过的题目。</p>
+            </div>
+          </article>
+        </div>
+
+        <div class="practice-history-panel" aria-labelledby="practice-history-title">
+          <div class="practice-history-heading">
+            <div>
+              <p class="eyebrow"><span></span> PRACTICE MEMORY</p>
+              <h3 id="practice-history-title">做题记录与错题</h3>
+            </div>
+            <p id="practice-history-summary">还没有已提交的题目。</p>
+          </div>
+          <div id="practice-history-filters" class="practice-history-filters" role="group" aria-label="筛选做题记录"></div>
+          <div id="practice-history-list" class="practice-history-list" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <section id="review-system" class="review-system" aria-labelledby="review-title">
+        <div class="section-heading review-heading">
+          <div>
+            <p class="eyebrow"><span></span> SMART REVIEW</p>
+            <h2 id="review-title">按熟悉度安排复习</h2>
+          </div>
+          <p id="review-summary-text">优先处理陌生词，并根据“记得 / 忘记”自动安排下次复习。</p>
+        </div>
+        <div id="review-levels" class="review-levels" role="group" aria-label="按熟悉度筛选"></div>
+        <div id="review-queue" class="review-queue" aria-live="polite"></div>
+      </section>
+
+      <section class="scope-panel" aria-labelledby="scope-title">
+        <div>
+          <p class="eyebrow"><span></span> FOCUS MODE</p>
+          <h2 id="scope-title">创建你的专属单词范围</h2>
+          <p>每行输入一个单词，或用逗号分隔。星系将仅显示范围内的词及它们之间的关系。</p>
+        </div>
+        <div class="scope-editor">
+          <label class="group-label" for="group-filter">按 SAT Excel 分组或 GRE 难度筛选</label>
+          <select id="group-filter">
+            <option value="">选择 SAT Group 1–179 或 GRE 分类</option>
+          </select>
+          <textarea id="scope-input" rows="3" placeholder="例如：benevolent, altruistic, magnanimous"></textarea>
+          <div>
+            <button id="apply-scope" class="primary-button" type="button">应用范围</button>
+            <button id="clear-scope" class="secondary-button" type="button">显示全部</button>
+          </div>
+          <p id="scope-feedback" class="scope-feedback" aria-live="polite"></p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="words.js"></script>
+  <script src="wordbank.js"></script>
+  <script src="gre.js"></script>
+  <script src="app.js?v=20260714-prep-system"></script>
+  <script src="offline-questions.js?v=20260714-expanded-bank-40"></script>
+  <script src="generated-questions.js?v=20260714-balanced-reading-250"></script>
+  <script src="prep.js?v=20260714-vocabulary-coverage"></script>
+</body>
+</html>
