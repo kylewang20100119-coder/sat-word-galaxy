@@ -398,6 +398,12 @@
     return visibleRelations().filter(r => r.source === id || r.target === id).sort((a,b) => b.strength-a.strength);
   }
 
+  function fullRelatedFor(id, type) {
+    return relations
+      .filter(relation => relation.type === type && (relation.source === id || relation.target === id))
+      .sort((a, b) => b.strength - a.strength || a.source.localeCompare(b.source, "en"));
+  }
+
   function fitDetailWord() {
     const label = detail.querySelector(".detail-word");
     if (!label) return;
@@ -418,10 +424,33 @@
     const catalogText = kind === "overlap"
       ? `SAT + GRE · ${word.group} · ${word.greTier || "GRE Core"}`
       : kind === "gre" ? `GRE · ${word.greTier || word.group}` : `SAT · ${word.group}`;
-    const tags = relatedFor(word.id).slice(0, 4).map(r => `<span>${typeNames[r.type]} · ${r.source === word.id ? r.target : r.source}</span>`).join("");
+    const synonymLinks = fullRelatedFor(word.id, "synonym").slice(0, 8);
+    const antonymLinks = fullRelatedFor(word.id, "antonym").slice(0, 8);
+    const relationColumn = (items, emptyText) => items.length
+      ? items.map(relation => {
+          const relatedId = relation.source === word.id ? relation.target : relation.source;
+          const relatedWord = wordMap.get(relatedId);
+          return `<button class="related-word" type="button" data-related-word="${relatedId}">${relatedId}<small>${relatedWord?.pos || "词性未知"} · ${Math.round(relation.strength * 100)}%</small></button>`;
+        }).join("")
+      : `<span class="relation-empty">${emptyText}</span>`;
+    const etymology = window.getLexicalEtymology ? window.getLexicalEtymology(word) : (word.etymology || "暂未找到可靠词源记录。");
+    const memory = word.memory || `把 ${word.id} 与例句中的具体语境绑定记忆。`;
+    const normalizeStem = value => String(value || "").toLowerCase().replace(/[^a-z]/g, "").replace(/(ingly|edly|ation|ition|ment|ness|ence|ance|able|ible|ious|ous|ive|ity|ally|al|ic|ate|ify|ize|ing|ed|ly|s)$/i, "");
+    const curatedFamily = (window.LEXICAL_FAMILIES || []).find(family => family.members.some(([id]) => id === word.id));
+    const stem = normalizeStem(word.id);
+    const derivedFamily = !curatedFamily && stem.length >= 5
+      ? words.filter(candidate => candidate.id !== word.id && normalizeStem(candidate.id) === stem).slice(0, 5).map(candidate => [candidate.id, candidate.zh || candidate.definition])
+      : [];
+    const familyRoot = curatedFamily?.root || (derivedFamily.length ? `${stem} · 同一派生词干` : "祖源锚点");
+    const familyMembers = curatedFamily?.members || derivedFamily;
+    const familyMarkup = familyMembers.length
+      ? familyMembers.map(([id, meaning]) => wordMap.has(id)
+        ? `<button type="button" class="family-word" data-family-word="${id}"><strong>${id}</strong><span>${meaning}</span></button>`
+        : `<div class="family-word external"><strong>${id}</strong><span>${meaning}</span></div>`).join("")
+      : `<div class="family-word root-anchor"><strong>${word.id} 的祖源</strong><span>${etymology}</span></div>`;
     detail.innerHTML = `
       <div class="detail-intro">
-        <span class="word-type">${word.pos}</span><span class="word-catalog ${kind}">${catalogText}</span>
+        <span class="word-type">词性 · ${word.pos}</span><span class="word-catalog ${kind}">${catalogText}</span>
         <div class="detail-word">${word.id}</div>
         <p class="phonetic">${word.phonetic}</p>
         <div class="familiarity"><span>我的熟悉度</span><div class="familiarity-options" role="group" aria-label="熟悉度 1 到 5">
@@ -433,11 +462,16 @@
         <p class="english-definition">${word.definition}</p>
         <p class="chinese-meaning">${word.zh}</p>
         <span class="detail-label">Example</span><p class="example">“${word.example}”</p>
-        <span class="detail-label">Collocations</span><div class="collocations">${word.collocations.map(c => `<span>${c}</span>`).join("")}${tags}</div>
+        <span class="detail-label">Collocations</span><div class="collocations">${(word.collocations || []).map(c => `<span>${c}</span>`).join("")}</div>
+        <div class="detail-relations">
+          <section class="relation-column synonyms"><span class="detail-label">Synonyms · 同义词</span><div>${relationColumn(synonymLinks, "暂无明确同义词")}</div></section>
+          <section class="relation-column antonyms"><span class="detail-label">Antonyms · 反义词</span><div>${relationColumn(antonymLinks, "暂无明确反义词")}</div></section>
+        </div>
       </div>
       <div class="detail-memory">
-        <span class="detail-label">Etymology</span><p class="etymology-text">${word.etymology}</p>
-        <div class="memory-box"><span class="detail-label">记忆方法</span><p>${word.memory}</p></div>
+        <span class="detail-label">Etymology · 拉丁语优先</span><p class="etymology-text">${etymology}</p>
+        <div class="memory-box"><span class="detail-label">词源记忆方法</span><p>${memory}</p></div>
+        <section class="word-family"><div class="word-family-heading"><span class="detail-label">Word family · 同源词族</span><small>${familyRoot}</small></div><div class="word-family-grid">${familyMarkup}</div></section>
       </div>`;
     fitDetailWord();
     requestAnimationFrame(fitDetailWord);
@@ -448,6 +482,8 @@
       window.dispatchEvent(new CustomEvent("lexiverse-level-change", { detail: { id: word.id, level: word.level, source: "app" } }));
       renderDetail(); buildLayout();
     }));
+    detail.querySelectorAll("[data-related-word]").forEach(button => button.addEventListener("click", () => selectWord(button.dataset.relatedWord)));
+    detail.querySelectorAll("[data-family-word]").forEach(button => button.addEventListener("click", () => selectWord(button.dataset.familyWord)));
   }
 
   function selectWord(id, animate = true) {
@@ -503,17 +539,18 @@
   document.getElementById("random-word").addEventListener("click", () => { const pool=universeWords(); selectWord(pool[Math.floor(Math.random()*pool.length)].id); });
 
   const search = document.getElementById("word-search"), results = document.getElementById("search-results");
+  const alphabeticalCollator = new Intl.Collator("en-US", { sensitivity: "base", numeric: false, ignorePunctuation: false });
+  const alphabetizedWords = words.slice().sort((a, b) => alphabeticalCollator.compare(a.id, b.id));
   function showSearch() {
     const q = search.value.trim().toLowerCase();
     if (!q) { results.hidden=true; return; }
-    const found = words
+    const found = alphabetizedWords
       .filter(w => w.id.includes(q) || w.zh.includes(q) || w.definition.toLowerCase().includes(q))
-      .sort((a, b) => a.id.localeCompare(b.id, "en", { sensitivity: "base" }))
       .slice(0, 8);
     results.innerHTML = found.length ? found.map(w => {
       const kind = catalogKind(w);
       const label = kind === "overlap" ? "SAT + GRE" : kind.toUpperCase();
-      return `<button type="button" class="search-result" role="option" data-word="${w.id}"><span>${w.id}</span><small>${label} · ${w.zh}</small></button>`;
+      return `<button type="button" class="search-result" role="option" data-word="${w.id}"><span>${w.id}</span><small>${label} · ${w.pos} · ${w.zh}</small></button>`;
     }).join("") : `<div class="search-result"><small>没有找到匹配单词</small></div>`;
     results.hidden=false; results.querySelectorAll("[data-word]").forEach(btn => btn.addEventListener("click", () => selectWord(btn.dataset.word)));
   }
@@ -558,11 +595,14 @@
   document.getElementById("theme-toggle").addEventListener("click", () => { const next=document.documentElement.dataset.theme==="light"?"dark":"light"; document.documentElement.dataset.theme=next; localStorage.setItem("lexiverse-theme",next); });
   try { const levels=JSON.parse(localStorage.getItem("lexiverse-levels")); if(levels)words.forEach(w => {if(levels[w.id])w.level=levels[w.id]}); } catch {}
   window.addEventListener("lexiverse-level-change", event => {
-    if (event.detail?.source !== "prep") return;
+    if (!event.detail?.id || event.detail.source === "app") return;
     const word = wordMap.get(event.detail.id);
     if (!word) return;
     word.level = Number(event.detail.level);
     if (selectedId === word.id) renderDetail();
+  });
+  window.addEventListener("lexiverse-select-word", event => {
+    if (event.detail?.id) selectWord(event.detail.id);
   });
   new ResizeObserver(() => { resize(); buildLayout(); }).observe(stage);
   new ResizeObserver(fitDetailWord).observe(detail);

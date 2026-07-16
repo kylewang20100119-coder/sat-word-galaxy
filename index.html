@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=Manrope:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20260714-practice-history">
+  <link rel="stylesheet" href="styles.css?v=20260715-100words-badges-reading-history">
 </head>
 <body>
   <div class="app-shell">
@@ -79,6 +79,113 @@
       </section>
 
       <aside id="word-detail" class="word-detail" aria-live="polite"></aside>
+
+      <section id="group-study" class="group-study" aria-labelledby="group-study-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow"><span></span> GROUP STUDY PATH</p>
+            <h2 id="group-study-title">按 Group 顺序背词与原文反应训练</h2>
+          </div>
+          <p>第一遍按原表顺序逐词学习；第二、三遍把同一 Group 随机拆成 3 / 3 / 4，并生成三篇覆盖全部目标词的 DSAT 风格短阅读。</p>
+        </div>
+        <div class="group-study-toolbar">
+          <label for="study-group-select">当前分组<select id="study-group-select"></select></label>
+          <div class="study-group-nav">
+            <button id="study-prev-group" class="secondary-button" type="button">上一 Group</button>
+            <button id="study-next-group" class="secondary-button" type="button">下一 Group</button>
+          </div>
+          <p id="study-group-progress" aria-live="polite"></p>
+        </div>
+        <div class="group-study-grid">
+          <article class="sequence-study-card">
+            <div class="sequence-heading"><span>第一遍 · 顺序背词</span><strong id="study-word-position"></strong></div>
+            <div class="study-reward-bar" aria-live="polite">
+              <span><small>连击</small><strong id="study-combo">0</strong></span>
+              <span><small>总能量</small><strong id="study-xp">0 XP</strong></span>
+              <div><small>今日目标</small><strong id="study-daily-goal">0 / 100</strong><i><b id="study-daily-fill"></b></i></div>
+            </div>
+            <p id="study-reward-message" class="study-reward-message">从今天的第一个词开始点亮星系。</p>
+            <div class="study-progression">
+              <div class="study-rank">
+                <div><span>当前段位</span><strong id="study-rank-title">星尘学徒</strong><small id="study-next-rank">距离下一段位还差 50 XP</small></div>
+                <i><b id="study-rank-fill"></b></i>
+              </div>
+              <div id="study-missions" class="study-missions" aria-label="今日背词任务">
+                <span data-mission="20"><i>✦</i><b>热身 20 词</b><small>+60 XP</small></span>
+                <span data-mission="50"><i>✦</i><b>巡航 50 词</b><small>+180 XP</small></span>
+                <span data-mission="100"><i>✦</i><b>满额 100 词</b><small>+500 XP</small></span>
+              </div>
+            </div>
+            <div id="study-word-card" class="study-word-card" aria-live="polite"></div>
+            <div id="study-word-strip" class="study-word-strip" aria-label="本组单词顺序"></div>
+            <div class="sequence-actions">
+              <button id="study-prev-word" class="secondary-button" type="button">上一个</button>
+              <button id="study-complete-word" class="primary-button" type="button">标记已背并继续</button>
+              <button id="study-next-word" class="secondary-button" type="button">下一个</button>
+            </div>
+          </article>
+          <div class="group-reading-panel">
+            <div class="group-reading-heading">
+              <div><span>第二 / 三遍 · DSAT 原文反应</span><p id="study-split-summary"></p></div>
+              <div class="reading-heading-actions">
+                <div class="reading-pass-toggle" role="group" aria-label="选择刷词轮次">
+                  <button type="button" data-reading-pass="2" aria-pressed="true">二刷 · 重点高亮</button>
+                  <button type="button" data-reading-pass="3" aria-pressed="false">三刷 · 原文直读</button>
+                </div>
+                <button id="reshuffle-group-readings" class="secondary-button" type="button">重新随机拆分</button>
+              </div>
+            </div>
+            <div id="group-reading-list" class="group-reading-list" aria-live="polite"></div>
+          </div>
+        </div>
+        <section class="group-reading-history-panel" aria-labelledby="group-reading-history-title">
+          <div class="reading-history-heading">
+            <div><p class="eyebrow"><span></span> THIRD-PASS LOG</p><h3 id="group-reading-history-title">原文反应训练记录</h3></div>
+            <div class="reading-history-filters" role="group" aria-label="筛选阅读记录">
+              <button type="button" data-reading-history-filter="current" aria-pressed="true">当前 Group</button>
+              <button type="button" data-reading-history-filter="all" aria-pressed="false">全部记录</button>
+            </div>
+          </div>
+          <div id="group-reading-stat-cards" class="group-reading-stat-cards" aria-live="polite"></div>
+          <div id="group-reading-history" class="group-reading-history" aria-live="polite"></div>
+        </section>
+        <section class="study-stats-panel" aria-labelledby="study-stats-title">
+          <div class="study-stats-heading">
+            <div><p class="eyebrow"><span></span> STUDY MOMENTUM</p><h3 id="study-stats-title">我的学习仪表盘</h3></div>
+            <p id="study-motivation"></p>
+          </div>
+          <div class="progress-import-panel">
+            <div>
+              <strong>迁移 Notion 背词进度</strong>
+              <p>导入只在当前浏览器本地完成，文件和个人进度都不会上传，也不会写进 GitHub。</p>
+              <p id="progress-import-status" class="progress-import-status" aria-live="polite">尚未导入 Notion 记录。</p>
+            </div>
+            <div class="progress-import-actions">
+              <input id="progress-import-file" type="file" accept=".json,application/json" hidden>
+              <button id="progress-import-button" class="primary-button" type="button">选择迁移文件</button>
+              <button id="progress-import-undo" class="secondary-button" type="button" hidden>撤销上次导入</button>
+            </div>
+          </div>
+          <div id="study-stat-cards" class="study-stat-cards" aria-live="polite"></div>
+          <section class="badge-cabinet" aria-labelledby="badge-cabinet-title">
+            <div class="badge-cabinet-heading"><div><strong id="badge-cabinet-title">我的星系勋章</strong><span>真实学习行为自动解锁，刷新或重启不会丢失</span></div><small id="badge-progress"></small></div>
+            <div id="study-badges" class="study-badges" aria-live="polite"></div>
+          </section>
+          <div class="study-overall-progress"><div><span>SAT WordBank 总进度</span><strong id="study-overall-label"></strong></div><div class="study-progress-track"><i id="study-progress-fill"></i></div></div>
+          <div class="group-progress-heading">
+            <div><strong>Group 进度与熟悉度地图</strong><span>每张卡片同时显示已背数量、熟悉度均值和 L1–L5 分布</span></div>
+            <div class="group-progress-filters" role="group" aria-label="筛选 Group 学习进度">
+              <button type="button" data-group-progress-filter="all" aria-pressed="true">全部</button>
+              <button type="button" data-group-progress-filter="active" aria-pressed="false">进行中</button>
+              <button type="button" data-group-progress-filter="complete" aria-pressed="false">已完成</button>
+            </div>
+          </div>
+          <div class="group-level-legend" aria-label="熟悉度颜色图例">
+            <span class="level-1"><i></i>L1 陌生</span><span class="level-2"><i></i>L2 模糊</span><span class="level-3"><i></i>L3 尚可</span><span class="level-4"><i></i>L4 掌握</span><span class="level-5"><i></i>L5 熟练</span>
+          </div>
+          <div id="group-progress-grid" class="group-progress-grid" aria-live="polite"></div>
+        </section>
+      </section>
 
       <section id="prep-lab" class="prep-lab" aria-labelledby="prep-title">
         <div class="section-heading">
@@ -153,7 +260,21 @@
           <p id="review-summary-text">优先处理陌生词，并根据“记得 / 忘记”自动安排下次复习。</p>
         </div>
         <div id="review-levels" class="review-levels" role="group" aria-label="按熟悉度筛选"></div>
-        <div id="review-queue" class="review-queue" aria-live="polite"></div>
+        <div class="review-session-status">
+          <div><strong id="review-session-progress">本轮 0 词</strong><span>先看释义，再判断记得或忘记</span></div>
+          <p id="review-feedback" aria-live="polite">选择一个熟悉度开始连续复习。</p>
+        </div>
+        <div class="review-workspace">
+          <div id="review-queue" class="review-queue" aria-live="polite"></div>
+          <section class="adaptive-review-reading" aria-labelledby="adaptive-reading-title">
+            <div class="adaptive-reading-heading">
+              <div><span>WEAK-WORD READING</span><h3 id="adaptive-reading-title">薄弱词高难度阅读</h3></div>
+              <button id="next-review-reading" class="secondary-button" type="button">换一篇</button>
+            </div>
+            <p id="review-reading-status">根据当前熟悉度，优先选择包含 L1–L2 单词的原创高难度文章。</p>
+            <article id="review-reading-card" class="review-reading-card" aria-live="polite"></article>
+          </section>
+        </div>
       </section>
 
       <section class="scope-panel" aria-labelledby="scope-title">
@@ -181,9 +302,12 @@
   <script src="words.js"></script>
   <script src="wordbank.js"></script>
   <script src="gre.js"></script>
-  <script src="app.js?v=20260714-prep-system"></script>
-  <script src="offline-questions.js?v=20260714-expanded-bank-40"></script>
-  <script src="generated-questions.js?v=20260714-balanced-reading-250"></script>
-  <script src="prep.js?v=20260714-vocabulary-coverage"></script>
+  <script src="lexical-expansion.js?v=20260715-gre-family-expansion-v5"></script>
+  <script src="app.js?v=20260715-word-families"></script>
+  <script src="group-study.js?v=20260715-100words-badges-reading-history"></script>
+  <script src="offline-questions.js?v=20260714-full-target-coverage"></script>
+  <script src="generated-questions.js?v=20260714-full-target-coverage"></script>
+  <script src="review-readings.js?v=20260715-curated-weak-word-readings"></script>
+  <script src="prep.js?v=20260715-visible-part-of-speech"></script>
 </body>
 </html>
