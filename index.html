@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=Manrope:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20260715-100words-badges-reading-history">
+  <link rel="stylesheet" href="styles.css?v=20260716-guided-nav-confusables">
 </head>
 <body>
   <div class="app-shell">
@@ -37,8 +37,35 @@
       </div>
     </header>
 
+    <button id="section-nav-mobile-toggle" class="section-nav-mobile-toggle" type="button" aria-controls="section-nav" aria-expanded="false">
+      <span aria-hidden="true">☰</span><strong>页面导引</strong>
+    </button>
+    <aside id="section-nav" class="section-nav" aria-label="页面导引">
+      <div class="section-nav-heading">
+        <div><span>学习地图</span><strong>随时跳转</strong></div>
+        <button id="section-nav-toggle" type="button" aria-label="收起页面导引" title="收起页面导引">‹</button>
+      </div>
+      <nav>
+        <a href="#galaxy" data-section-link="galaxy"><i>01</i><span><strong>单词星系</strong><small>探索词义关系</small></span></a>
+        <a href="#word-detail" data-section-link="word-detail"><i>02</i><span><strong>单词资料</strong><small>释义、词源与词族</small></span></a>
+        <a href="#group-study" data-section-link="group-study"><i>03</i><span><strong>Group 背词</strong><small>顺序学习与阅读</small></span></a>
+        <a href="#confusable-study" data-section-link="confusable-study"><i>04</i><span><strong>易混辨析</strong><small>语境二选一</small></span></a>
+        <a href="#reading-history" data-section-link="reading-history"><i>05</i><span><strong>阅读记录</strong><small>二刷与三刷轨迹</small></span></a>
+        <a href="#study-dashboard" data-section-link="study-dashboard"><i>06</i><span><strong>学习仪表盘</strong><small>进度、勋章与数据</small></span></a>
+        <a href="#prep-lab" data-section-link="prep-lab"><i>07</i><span><strong>DSAT 训练</strong><small>离线仿真题库</small></span></a>
+        <a href="#review-system" data-section-link="review-system"><i>08</i><span><strong>智能复习</strong><small>按熟悉度巩固</small></span></a>
+        <a href="#scope-panel" data-section-link="scope-panel"><i>09</i><span><strong>范围筛选</strong><small>创建专属词库</small></span></a>
+      </nav>
+      <div class="section-nav-status" aria-live="polite">
+        <div><span>今日背词</span><strong id="section-nav-daily">0 / 100</strong></div>
+        <i><b id="section-nav-daily-fill"></b></i>
+        <small id="section-nav-current-group">Group 1 · 继续积累</small>
+      </div>
+    </aside>
+    <button id="section-nav-scrim" class="section-nav-scrim" type="button" aria-label="关闭页面导引" tabindex="-1"></button>
+
     <main>
-      <section class="galaxy-panel" aria-label="单词关系星系">
+      <section id="galaxy" class="galaxy-panel" aria-label="单词关系星系">
         <div class="galaxy-heading">
           <div>
             <p class="eyebrow"><span></span> YOUR WORD UNIVERSE</p>
@@ -115,12 +142,18 @@
                 <span data-mission="50"><i>✦</i><b>巡航 50 词</b><small>+180 XP</small></span>
                 <span data-mission="100"><i>✦</i><b>满额 100 词</b><small>+500 XP</small></span>
               </div>
+              <div id="study-mode-quests" class="study-mode-quests" aria-label="今日跨模式任务"></div>
+              <div id="study-constellation-collection" class="study-constellation-collection" aria-live="polite"></div>
+            </div>
+            <div class="study-flow-meter" aria-live="polite">
+              <div><span>本轮沉浸冲刺</span><strong id="study-sprint-count">0 / 10</strong></div>
+              <i><b id="study-sprint-fill"></b></i>
+              <p id="study-next-preview">完成评级后自动进入下一词</p>
             </div>
             <div id="study-word-card" class="study-word-card" aria-live="polite"></div>
             <div id="study-word-strip" class="study-word-strip" aria-label="本组单词顺序"></div>
             <div class="sequence-actions">
               <button id="study-prev-word" class="secondary-button" type="button">上一个</button>
-              <button id="study-complete-word" class="primary-button" type="button">标记已背并继续</button>
               <button id="study-next-word" class="secondary-button" type="button">下一个</button>
             </div>
           </article>
@@ -138,7 +171,8 @@
             <div id="group-reading-list" class="group-reading-list" aria-live="polite"></div>
           </div>
         </div>
-        <section class="group-reading-history-panel" aria-labelledby="group-reading-history-title">
+        <section id="confusable-study" class="confusable-study" aria-label="易混词对比背诵"></section>
+        <section id="reading-history" class="group-reading-history-panel" aria-labelledby="group-reading-history-title">
           <div class="reading-history-heading">
             <div><p class="eyebrow"><span></span> THIRD-PASS LOG</p><h3 id="group-reading-history-title">原文反应训练记录</h3></div>
             <div class="reading-history-filters" role="group" aria-label="筛选阅读记录">
@@ -149,7 +183,7 @@
           <div id="group-reading-stat-cards" class="group-reading-stat-cards" aria-live="polite"></div>
           <div id="group-reading-history" class="group-reading-history" aria-live="polite"></div>
         </section>
-        <section class="study-stats-panel" aria-labelledby="study-stats-title">
+        <section id="study-dashboard" class="study-stats-panel" aria-labelledby="study-stats-title">
           <div class="study-stats-heading">
             <div><p class="eyebrow"><span></span> STUDY MOMENTUM</p><h3 id="study-stats-title">我的学习仪表盘</h3></div>
             <p id="study-motivation"></p>
@@ -167,6 +201,7 @@
             </div>
           </div>
           <div id="study-stat-cards" class="study-stat-cards" aria-live="polite"></div>
+          <section id="study-pass-journey" class="study-pass-journey" aria-label="单词多遍掌握路线"></section>
           <section class="badge-cabinet" aria-labelledby="badge-cabinet-title">
             <div class="badge-cabinet-heading"><div><strong id="badge-cabinet-title">我的星系勋章</strong><span>真实学习行为自动解锁，刷新或重启不会丢失</span></div><small id="badge-progress"></small></div>
             <div id="study-badges" class="study-badges" aria-live="polite"></div>
@@ -277,7 +312,7 @@
         </div>
       </section>
 
-      <section class="scope-panel" aria-labelledby="scope-title">
+      <section id="scope-panel" class="scope-panel" aria-labelledby="scope-title">
         <div>
           <p class="eyebrow"><span></span> FOCUS MODE</p>
           <h2 id="scope-title">创建你的专属单词范围</h2>
@@ -302,12 +337,16 @@
   <script src="words.js"></script>
   <script src="wordbank.js"></script>
   <script src="gre.js"></script>
-  <script src="lexical-expansion.js?v=20260715-gre-family-expansion-v5"></script>
-  <script src="app.js?v=20260715-word-families"></script>
-  <script src="group-study.js?v=20260715-100words-badges-reading-history"></script>
+  <script src="lexical-expansion.js?v=20260716-group-word-families"></script>
+  <script src="confusables.js?v=20260716-confusable-study"></script>
+  <script src="progress-store.js?v=20260716-word-pass-count"></script>
+  <script src="app.js?v=20260716-word-pass-count"></script>
+  <script src="group-study.js?v=20260716-game-system-2"></script>
+  <script src="confusable-study.js?v=20260716-context-quiz"></script>
   <script src="offline-questions.js?v=20260714-full-target-coverage"></script>
   <script src="generated-questions.js?v=20260714-full-target-coverage"></script>
   <script src="review-readings.js?v=20260715-curated-weak-word-readings"></script>
-  <script src="prep.js?v=20260715-visible-part-of-speech"></script>
+  <script src="prep.js?v=20260716-word-pass-count"></script>
+  <script src="section-nav.js?v=20260716-guided-nav"></script>
 </body>
 </html>

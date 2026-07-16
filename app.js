@@ -434,6 +434,7 @@
         }).join("")
       : `<span class="relation-empty">${emptyText}</span>`;
     const etymology = window.getLexicalEtymology ? window.getLexicalEtymology(word) : (word.etymology || "暂未找到可靠词源记录。");
+    const passCount = window.LexiversePasses?.get(word.id) || 0;
     const memory = word.memory || `把 ${word.id} 与例句中的具体语境绑定记忆。`;
     const normalizeStem = value => String(value || "").toLowerCase().replace(/[^a-z]/g, "").replace(/(ingly|edly|ation|ition|ment|ness|ence|ance|able|ible|ious|ous|ive|ity|ally|al|ic|ate|ify|ize|ing|ed|ly|s)$/i, "");
     const curatedFamily = (window.LEXICAL_FAMILIES || []).find(family => family.members.some(([id]) => id === word.id));
@@ -450,7 +451,7 @@
       : `<div class="family-word root-anchor"><strong>${word.id} 的祖源</strong><span>${etymology}</span></div>`;
     detail.innerHTML = `
       <div class="detail-intro">
-        <span class="word-type">词性 · ${word.pos}</span><span class="word-catalog ${kind}">${catalogText}</span>
+        <span class="word-type">词性 · ${word.pos}</span><span class="word-catalog ${kind}">${catalogText}</span><span class="word-pass-count">累计 ${passCount} 遍</span>
         <div class="detail-word">${word.id}</div>
         <p class="phonetic">${word.phonetic}</p>
         <div class="familiarity"><span>我的熟悉度</span><div class="familiarity-options" role="group" aria-label="熟悉度 1 到 5">
@@ -496,6 +497,10 @@
     document.getElementById("word-search").value = "";
     document.getElementById("search-results").hidden = true;
   }
+
+  window.addEventListener("lexiverse-pass-change", event => {
+    if ((event.detail?.ids || []).includes(selectedId)) renderDetail();
+  });
 
   function nodeAt(clientX, clientY) {
     const rect = canvas.getBoundingClientRect(); const x = clientX - rect.left, y = clientY - rect.top;

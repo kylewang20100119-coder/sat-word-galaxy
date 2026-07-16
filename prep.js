@@ -6,7 +6,8 @@
   });
   const satWords = [...satMap.values()].filter(word => /^Group \d+$/.test(word.group || ""));
   const wordMap = new Map(satWords.map(word => [word.id, word]));
-  const questionBank = Array.isArray(window.OFFLINE_SAT_QUESTIONS) ? window.OFFLINE_SAT_QUESTIONS : [];
+  const reviewReadings = Array.isArray(window.REVIEW_SAT_READINGS) ? window.REVIEW_SAT_READINGS : [];
+  const questionBank = [...(Array.isArray(window.OFFLINE_SAT_QUESTIONS) ? window.OFFLINE_SAT_QUESTIONS : []), ...reviewReadings];
 
   let levelStore = {};
   let reviewStore = {};
@@ -36,6 +37,11 @@
   const reviewLevels = document.getElementById("review-levels");
   const reviewQueue = document.getElementById("review-queue");
   const reviewSummary = document.getElementById("review-summary-text");
+  const reviewSessionProgress = document.getElementById("review-session-progress");
+  const reviewFeedback = document.getElementById("review-feedback");
+  const reviewReadingCard = document.getElementById("review-reading-card");
+  const reviewReadingStatus = document.getElementById("review-reading-status");
+  const nextReviewReading = document.getElementById("next-review-reading");
   if (!passageForm || !reviewQueue || !practiceHistoryList) return;
 
   const savedMeaningPreference = localStorage.getItem("lexiverse-show-practice-meanings");
@@ -62,17 +68,27 @@
     });
   }
 
+  function passageContainsWord(passage, id) {
+    const escaped = String(id).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^a-z])${escaped}([^a-z]|$)`, "i").test(String(passage || ""));
+  }
+
   function questionCandidates() {
     const poolIds = new Set(generatorPool().map(word => word.id));
     const completedIds = new Set(practiceAttempts.map(attempt => attempt.questionId));
     const requestedDifficulty = difficulty.value;
+    const requestedCount = Number(wordCount.value);
     return questionBank
       .filter(item => !completedIds.has(item.id))
+      .filter(item => item.skill !== "Cross-Text Connections")
       .filter(item => item.genre === genre.value)
       .filter(item => requestedDifficulty !== "hard" || item.difficulty === "hard")
-      .map(item => ({ item, matches: item.targets.filter(id => poolIds.has(id)) }))
-      .filter(entry => entry.matches.length > 0)
-      .sort((a, b) => b.matches.length - a.matches.length);
+      .map(item => ({
+        item,
+        matches: (item.targets || []).filter(id => poolIds.has(id) && passageContainsWord(item.passage, id))
+      }))
+      .filter(entry => entry.matches.length >= requestedCount)
+      .sort((a, b) => Number(b.item.quality === "curated") - Number(a.item.quality === "curated") || b.matches.length - a.matches.length);
   }
 
   function updatePoolStatus() {
@@ -81,13 +97,19 @@
     const candidates = questionCandidates();
     const strongest = candidates[0]?.matches.length || 0;
     poolStatus.textContent = candidates.length
-      ? `当前范围 ${pool.length} 个词 · 熟悉度 ${levels} · 剩余 ${candidates.length} 题 · 最多命中 ${strongest} 个重点词`
-      : `这个筛选范围内的匹配题已经完成，或暂时没有可匹配题目。可调整 Group、熟悉度、难度或文章类型。`;
+      ? `当前范围 ${pool.length} 个词 · 熟悉度 ${levels} · 剩余 ${candidates.length} 题 · 每题正文保证出现所选 ${Number(wordCount.value)} 个词`
+      : `这个筛选范围内没有同时在正文中出现 ${Number(wordCount.value)} 个目标词的未完成题目。可扩大 Group 范围、熟悉度或切换文章类型。`;
     generateButton.disabled = !selectedLevels().size || !candidates.length;
   }
 
   function escapePattern(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, character => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[character]);
   }
 
   function appendHighlightedPassage(container, text, targetWords) {
@@ -108,9 +130,10 @@
 
   function updateTargetWordMeanings() {
     passageOutput.querySelectorAll(".target-word-list span[data-word]").forEach(chip => {
+      const label = `${chip.dataset.word} · ${chip.dataset.pos || "词性未知"}`;
       chip.textContent = showMeanings.checked && chip.dataset.meaning
-        ? `${chip.dataset.word} · ${chip.dataset.meaning}`
-        : chip.dataset.word;
+        ? `${label} · ${chip.dataset.meaning}`
+        : label;
     });
   }
 
@@ -140,6 +163,7 @@
       const chip = document.createElement("span");
       const note = vocabulary.get(word.id.toLowerCase());
       chip.dataset.word = word.id;
+      chip.dataset.pos = word.pos || "词性未知";
       chip.dataset.meaning = note?.meaning_in_context || word.zh || "";
       targetList.append(chip);
     });
@@ -237,7 +261,8 @@
       const targets = card.querySelector(".history-targets");
       (attempt.targetIds || []).forEach(id => {
         const chip = document.createElement("span");
-        chip.textContent = id;
+        const targetWord = wordMap.get(id);
+        chip.textContent = `${id} · ${targetWord?.pos || "词性未知"}`;
         targets.append(chip);
       });
       card.querySelector(".view-history-question").addEventListener("click", () => {
@@ -254,8 +279,10 @@
     const candidates = questionCandidates();
     const count = Number(wordCount.value);
     if (!candidates.length) { updatePoolStatus(); return; }
-    const bestMatch = candidates[0].matches.length;
-    const strongest = candidates.filter(entry => entry.matches.length === bestMatch);
+    const preferredQuality = candidates[0].item.quality === "curated";
+    const qualityTier = candidates.filter(entry => (entry.item.quality === "curated") === preferredQuality);
+    const bestMatch = Math.max(...qualityTier.map(entry => entry.matches.length));
+    const strongest = qualityTier.filter(entry => entry.matches.length === bestMatch);
     const fresh = strongest.filter(entry => entry.item.id !== lastDrawnQuestionId);
     const choices = fresh.length ? fresh : strongest;
     const selected = choices[Math.floor(Math.random() * choices.length)];
@@ -267,11 +294,34 @@
   });
 
   let reviewFilter = "due";
+  let reviewSeen = new Set();
+  let reviewSessionCount = 0;
+  let reviewSessionPromoted = 0;
+  let lastReviewReadingId = "";
+  let reviewReadingAttempts = [];
+  try { reviewReadingAttempts = JSON.parse(localStorage.getItem("lexiverse-review-reading-attempts-v1")) || []; } catch {}
+  if (!Array.isArray(reviewReadingAttempts)) reviewReadingAttempts = [];
   const intervals = { 1: 1, 2: 2, 3: 5, 4: 12, 5: 30 };
 
   function isDue(word) {
     const state = reviewStore[word.id];
     return !state || Number(state.nextReview || 0) <= Date.now();
+  }
+
+  function todayStudiedIds() {
+    let completed = {};
+    try { completed = JSON.parse(localStorage.getItem("lexiverse-group-study-v1"))?.completed || {}; } catch {}
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const tomorrowStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+    return new Set(Object.entries(completed)
+      .filter(([, timestamp]) => Number(timestamp) >= todayStart && Number(timestamp) < tomorrowStart)
+      .map(([id]) => id));
+  }
+
+  function todayReviewWords() {
+    const ids = todayStudiedIds();
+    return satWords.filter(word => ids.has(word.id) && Number(word.level) !== 5);
   }
 
   function persistReview() {
@@ -282,73 +332,189 @@
   function updateWordLevel(word, remembered) {
     const now = Date.now();
     const previous = reviewStore[word.id] || { streak: 0 };
-    word.level = remembered ? Math.min(5, word.level + 1) : Math.max(1, word.level - 1);
+    const oldLevel = Number(word.level) || 1;
+    word.level = remembered ? Math.min(5, oldLevel + 1) : Math.max(1, oldLevel - 1);
     levelStore[word.id] = word.level;
     reviewStore[word.id] = remembered
       ? { streak: Number(previous.streak || 0) + 1, lastReviewed: now, nextReview: now + intervals[word.level] * 86400000 }
       : { streak: 0, lastReviewed: now, nextReview: now + 10 * 60000 };
+    reviewSeen.add(word.id);
+    reviewSessionCount += 1;
+    window.LexiversePasses?.increment(word.id, "review-card");
+    if (remembered && word.level > oldLevel) reviewSessionPromoted += 1;
     persistReview();
     window.dispatchEvent(new CustomEvent("lexiverse-level-change", { detail: { id: word.id, level: word.level, source: "prep" } }));
+    reviewFeedback.textContent = remembered
+      ? word.level > oldLevel
+        ? `✓ ${word.id}：熟悉度 ${oldLevel} → ${word.level}，已自动进入下一级。`
+        : `✓ ${word.id} 已稳定在最高熟悉度 5。`
+      : word.level < oldLevel
+        ? `${word.id}：熟悉度 ${oldLevel} → ${word.level}，稍后会更快再次出现。`
+        : `${word.id} 暂时保留在熟悉度 1，10 分钟后再次到期。`;
     renderReview();
     updatePoolStatus();
+    renderAdaptiveReading();
   }
 
   function renderLevelFilters() {
     const counts = Object.fromEntries([1, 2, 3, 4, 5].map(level => [level, satWords.filter(word => word.level === level).length]));
     const dueCount = satWords.filter(isDue).length;
+    const todayCount = todayReviewWords().length;
     reviewLevels.innerHTML = `
       <button class="review-filter" type="button" data-review-filter="due" aria-pressed="${reviewFilter === "due"}"><strong>${dueCount}</strong><span>到期复习</span></button>
+      <button class="review-filter" type="button" data-review-filter="today" aria-pressed="${reviewFilter === "today"}"><strong>${todayCount}</strong><span>今日新背 · 未到 L5</span></button>
       ${[1, 2, 3, 4, 5].map(level => `<button class="review-filter" type="button" data-review-filter="${level}" aria-pressed="${String(reviewFilter) === String(level)}"><strong>${counts[level]}</strong><span>熟悉度 ${level}</span></button>`).join("")}`;
     reviewLevels.querySelectorAll("[data-review-filter]").forEach(button => button.addEventListener("click", () => {
       reviewFilter = button.dataset.reviewFilter;
+      reviewSeen = new Set();
+      reviewSessionCount = 0;
+      reviewSessionPromoted = 0;
+      reviewFeedback.textContent = reviewFilter === "due"
+        ? "已切换到到期队列，优先从熟悉度最低的词开始。"
+        : reviewFilter === "today"
+          ? "开始复习今天新背且尚未达到熟悉度 5 的单词。"
+        : `已进入熟悉度 ${reviewFilter} 连续复习；记得后会自动升到下一级。`;
       renderReview();
     }));
   }
 
   function reviewCandidates() {
-    const filtered = reviewFilter === "due" ? satWords.filter(isDue) : satWords.filter(word => word.level === Number(reviewFilter));
-    return filtered.sort((a, b) => a.level - b.level || Number(reviewStore[a.id]?.nextReview || 0) - Number(reviewStore[b.id]?.nextReview || 0) || a.id.localeCompare(b.id, "en")).slice(0, 12);
+    const filtered = reviewFilter === "due"
+      ? satWords.filter(isDue)
+      : reviewFilter === "today"
+        ? todayReviewWords()
+        : satWords.filter(word => word.level === Number(reviewFilter));
+    return filtered
+      .filter(word => !reviewSeen.has(word.id))
+      .sort((a, b) => a.level - b.level || Number(reviewStore[a.id]?.nextReview || 0) - Number(reviewStore[b.id]?.nextReview || 0) || a.id.localeCompare(b.id, "en"));
   }
 
   function renderReview() {
     renderLevelFilters();
     const candidates = reviewCandidates();
+    const totalInFilter = reviewFilter === "due"
+      ? satWords.filter(isDue).length
+      : reviewFilter === "today"
+        ? todayReviewWords().length
+        : satWords.filter(word => word.level === Number(reviewFilter)).length;
     reviewSummary.textContent = reviewFilter === "due"
-      ? `今天有 ${satWords.filter(isDue).length} 个词可复习，当前优先显示熟悉度最低的 12 个。`
-      : `正在查看熟悉度 ${reviewFilter} 的单词，按字母顺序显示前 12 个。`;
+      ? `今天有 ${totalInFilter} 个词到期。每次只显示一个，回答后自动进入下一个。`
+      : reviewFilter === "today"
+        ? `今天新背的单词中有 ${totalInFilter} 个尚未达到熟悉度 5；升到 L5 后会自动离开这个队列。`
+      : `正在连续复习熟悉度 ${reviewFilter}；点击“记得”会立即升级，点击“忘记”会降低一级并缩短间隔。`;
+    reviewSessionProgress.textContent = `本轮 ${reviewSessionCount} 词 · 升级 ${reviewSessionPromoted} 词 · 剩余 ${candidates.length}`;
     reviewQueue.innerHTML = "";
     if (!candidates.length) {
-      reviewQueue.innerHTML = `<p class="review-empty">这一组暂时没有需要复习的单词。</p>`;
+      reviewQueue.innerHTML = `<div class="review-session-complete"><span>✦</span><h3>${reviewSessionCount ? "这一轮完成了" : "这一组暂时没有单词"}</h3><p>${reviewSessionCount ? `你连续处理了 ${reviewSessionCount} 个词，其中 ${reviewSessionPromoted} 个成功升级。` : "可以选择其他熟悉度，或切换到到期复习。"}</p><button type="button" class="secondary-button" id="restart-review-session">再来一轮</button></div>`;
+      document.getElementById("restart-review-session")?.addEventListener("click", () => {
+        reviewSeen = new Set();
+        reviewSessionCount = 0;
+        reviewSessionPromoted = 0;
+        reviewFeedback.textContent = "新一轮开始。";
+        renderReview();
+      });
       return;
     }
-    candidates.forEach(word => {
-      const card = document.createElement("article");
-      card.className = "review-card";
-      card.innerHTML = `
-        <div class="review-card-header"><h3></h3><span class="review-level-badge"></span></div>
-        <p class="review-group"></p>
-        <p class="review-answer" hidden></p>
-        <button class="reveal-review" type="button">查看释义</button>
-        <div class="review-actions"><button class="forgot" type="button">忘记了</button><button class="remembered" type="button">记得</button></div>`;
-      card.querySelector("h3").textContent = word.id;
-      card.querySelector(".review-level-badge").textContent = `LEVEL ${word.level}`;
-      card.querySelector(".review-group").textContent = word.group;
-      const answer = card.querySelector(".review-answer");
-      answer.textContent = `${word.zh} · ${word.definition}`;
-      card.querySelector(".reveal-review").addEventListener("click", event => {
-        answer.hidden = false;
-        event.currentTarget.hidden = true;
-      });
-      card.querySelector(".forgot").addEventListener("click", () => updateWordLevel(word, false));
-      card.querySelector(".remembered").addEventListener("click", () => updateWordLevel(word, true));
-      reviewQueue.append(card);
+    const word = candidates[0];
+    const oldLevel = Number(word.level) || 1;
+    const card = document.createElement("article");
+    card.className = "review-card review-focus-card";
+    card.tabIndex = 0;
+    card.innerHTML = `
+      <div class="review-card-header"><h3></h3><span class="review-level-badge"></span></div>
+      <p class="review-group"></p>
+      <div class="review-prompt"><span>先在脑中回忆中文意思和英文解释</span><small>空格：显示答案 · ←：忘记 · →：记得</small></div>
+      <div class="review-answer" hidden><strong class="review-zh"></strong><p class="review-definition"></p><blockquote class="review-example"></blockquote></div>
+      <button class="reveal-review" type="button">显示答案</button>
+      <div class="review-actions"><button class="forgot" type="button">忘记 · ${oldLevel > 1 ? `降到 L${oldLevel - 1}` : "留在 L1"}</button><button class="skip-review" type="button">暂时跳过</button><button class="remembered" type="button">记得 · ${oldLevel < 5 ? `升到 L${oldLevel + 1}` : "保持 L5"}</button></div>`;
+    card.querySelector("h3").textContent = word.id;
+    card.querySelector(".review-level-badge").textContent = `LEVEL ${word.level}`;
+    card.querySelector(".review-group").textContent = `${word.group} · 词性 ${word.pos || "未知"}`;
+    card.querySelector(".review-zh").textContent = word.zh;
+    card.querySelector(".review-definition").textContent = word.definition;
+    card.querySelector(".review-example").textContent = word.example;
+    const answer = card.querySelector(".review-answer");
+    const reveal = () => {
+      answer.hidden = false;
+      card.querySelector(".reveal-review").hidden = true;
+    };
+    card.querySelector(".reveal-review").addEventListener("click", reveal);
+    card.querySelector(".forgot").addEventListener("click", () => updateWordLevel(word, false));
+    card.querySelector(".remembered").addEventListener("click", () => updateWordLevel(word, true));
+    card.querySelector(".skip-review").addEventListener("click", () => {
+      reviewSeen.add(word.id);
+      reviewFeedback.textContent = `已暂时跳过 ${word.id}，熟悉度没有改变。`;
+      renderReview();
     });
+    card.addEventListener("keydown", event => {
+      if (event.key === " ") { event.preventDefault(); reveal(); }
+      if (event.key === "ArrowLeft") { event.preventDefault(); updateWordLevel(word, false); }
+      if (event.key === "ArrowRight") { event.preventDefault(); updateWordLevel(word, true); }
+    });
+    reviewQueue.append(card);
+  }
+
+  function adaptiveReadingCandidates() {
+    const completed = new Set(reviewReadingAttempts.map(attempt => attempt.id));
+    return reviewReadings.map(reading => {
+      const words = (reading.targets || []).map(id => wordMap.get(id)).filter(Boolean);
+      const weakCount = words.filter(word => Number(word.level) <= 2).length;
+      const priority = words.reduce((sum, word) => sum + Math.max(0, 6 - Number(word.level || 1)), 0);
+      return { reading, words, weakCount, priority, completed: completed.has(reading.id) };
+    }).sort((a, b) => Number(a.completed) - Number(b.completed) || b.weakCount - a.weakCount || b.priority - a.priority || a.reading.id.localeCompare(b.reading.id));
+  }
+
+  function renderAdaptiveReading(forceNext = false) {
+    if (!reviewReadingCard || !reviewReadings.length) return;
+    const candidates = adaptiveReadingCandidates();
+    const available = candidates.filter(entry => entry.reading.id !== lastReviewReadingId);
+    const selected = (forceNext ? available : candidates)[0] || candidates[0];
+    if (!selected) return;
+    const { reading, words, weakCount } = selected;
+    lastReviewReadingId = reading.id;
+    reviewReadingStatus.textContent = `本篇匹配 ${weakCount} 个 L1–L2 薄弱词 · ${words.map(word => `${word.id} (${word.pos}, L${word.level})`).join(" · ")}`;
+    reviewReadingCard.innerHTML = `
+      <div class="review-reading-meta"><span>${escapeHtml(reading.domain)}</span><span>${escapeHtml(reading.skill)}</span><span>高难度 · 人工校验</span></div>
+      <h4>${escapeHtml(reading.title)}</h4>
+      <p class="review-reading-passage"></p>
+      <div class="review-reading-targets"></div>
+      <p class="review-reading-question">${escapeHtml(reading.question)}</p>
+      <div class="review-reading-choices">${reading.choices.map((choice, index) => `<button type="button" data-review-reading-choice="${index}">${String.fromCharCode(65 + index)}. ${escapeHtml(choice)}</button>`).join("")}</div>
+      <p class="review-reading-explanation" hidden></p>`;
+    appendHighlightedPassage(reviewReadingCard.querySelector(".review-reading-passage"), reading.passage, words);
+    const targetBox = reviewReadingCard.querySelector(".review-reading-targets");
+    words.forEach(word => {
+      const chip = document.createElement("span");
+      chip.textContent = `${word.id} · ${word.pos || "词性未知"} · L${word.level}`;
+      targetBox.append(chip);
+    });
+    reviewReadingCard.querySelectorAll("[data-review-reading-choice]").forEach(button => button.addEventListener("click", () => {
+      const selectedAnswer = Number(button.dataset.reviewReadingChoice);
+      reviewReadingCard.querySelectorAll("[data-review-reading-choice]").forEach((choice, index) => {
+        choice.disabled = true;
+        if (index === Number(reading.answer)) choice.classList.add("correct");
+      });
+      if (selectedAnswer !== Number(reading.answer)) button.classList.add("incorrect");
+      const explanation = reviewReadingCard.querySelector(".review-reading-explanation");
+      explanation.textContent = reading.explanation;
+      explanation.hidden = false;
+      if (!reviewReadingAttempts.some(attempt => attempt.id === reading.id)) {
+        reviewReadingAttempts.push({ id: reading.id, correct: selectedAnswer === Number(reading.answer), answeredAt: Date.now() });
+        localStorage.setItem("lexiverse-review-reading-attempts-v1", JSON.stringify(reviewReadingAttempts));
+        window.LexiversePasses?.increment(words.map(word => word.id), "adaptive-reading");
+      }
+    }));
   }
 
   passageForm.addEventListener("change", updatePoolStatus);
   showMeanings.addEventListener("change", () => {
     localStorage.setItem("lexiverse-show-practice-meanings", String(showMeanings.checked));
     updateTargetWordMeanings();
+  });
+  nextReviewReading?.addEventListener("click", () => renderAdaptiveReading(true));
+  window.addEventListener("lexiverse-study-complete", () => {
+    if (reviewFilter === "today") renderReview();
+    else renderLevelFilters();
   });
   window.addEventListener("lexiverse-level-change", event => {
     if (!event.detail?.id || event.detail.source === "prep") return;
@@ -357,10 +523,12 @@
     word.level = Number(event.detail.level);
     levelStore[word.id] = word.level;
     renderReview();
+    renderAdaptiveReading();
     updatePoolStatus();
   });
 
   updatePoolStatus();
   renderPracticeHistory();
   renderReview();
+  renderAdaptiveReading();
 })();

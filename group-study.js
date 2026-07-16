@@ -3,10 +3,15 @@
   const enriched = new Map((window.WORDS || []).map(word => [word.id, word]));
   const satWords = bankWords.map(word => ({ ...word, ...(enriched.get(word.id) || {}), group: word.group }));
   const wordMap = new Map(satWords.map(word => [word.id, word]));
+  const allWordMap = new Map();
+  [...bankWords, ...(window.WORDS || []), ...(window.GRE_WORDS || [])].forEach(word => {
+    const previous = allWordMap.get(word.id) || {};
+    allWordMap.set(word.id, { ...previous, ...word });
+  });
   const relationRows = [...(window.WORDBANK_RELATIONS || []), ...(window.RELATIONS || []), ...(window.GRE_RELATIONS || [])];
   const relationIndex = new Map();
   relationRows.forEach(([source, target, type, strength]) => {
-    if (type !== "synonym" && type !== "antonym") return;
+    if (!["synonym", "antonym", "etymology"].includes(type)) return;
     [source, target].forEach((id, index) => {
       if (!relationIndex.has(id)) relationIndex.set(id, []);
       relationIndex.get(id).push({ id: index === 0 ? target : source, type, strength: Number(strength) || 0 });
@@ -31,7 +36,7 @@
     .filter(Number.isFinite)
     .sort((a, b) => a - b);
   const groups = new Map(groupNumbers.map(number => [number, satWords.filter(word => word.group === `Group ${number}`)]));
-  let state = { group: groupNumbers[0] || 1, index: 0, completed: {}, splits: {}, variants: {}, totalXp: 0, bestCombo: 0, dailyRewards: {}, readingHistory: [], readingRewarded: [], readingPass: 2, badges: {} };
+  let state = { group: groupNumbers[0] || 1, index: 0, completed: {}, splits: {}, variants: {}, totalXp: 0, bestCombo: 0, dailyRewards: {}, modeRewards: {}, readingHistory: [], readingRewarded: [], readingPass: 2, badges: {}, studyHistory: [], sprintProgress: 0, totalSprints: 0, starFragments: 0, constellations: [] };
   let levelStore = {};
   let sessionCombo = 0;
   let rewardMessage = "从今天的第一个词开始点亮星系。";
@@ -39,6 +44,13 @@
     state = { ...state, ...(JSON.parse(localStorage.getItem("lexiverse-group-study-v1")) || {}) };
   } catch {}
   try { levelStore = JSON.parse(localStorage.getItem("lexiverse-levels")) || {}; } catch {}
+  if (!Array.isArray(state.studyHistory)) state.studyHistory = [];
+  if (!state.studyHistory.length) {
+    state.studyHistory = Object.entries(state.completed || {})
+      .filter(([, timestamp]) => Number(timestamp) > 1000000000000)
+      .map(([id, timestamp]) => ({ id, source: "legacy-new", at: Number(timestamp) }));
+  }
+  if (!Array.isArray(state.constellations)) state.constellations = [];
   satWords.forEach(word => { word.level = Number(levelStore[word.id] || word.level || 1); });
   if (!groups.has(Number(state.group))) state.group = groupNumbers[0] || 1;
   let groupProgressFilter = "all";
@@ -86,7 +98,8 @@
     const backup = {
       createdAt: new Date().toISOString(),
       levels: localStorage.getItem("lexiverse-levels"),
-      groupStudy: localStorage.getItem("lexiverse-group-study-v1")
+      groupStudy: localStorage.getItem("lexiverse-group-study-v1"),
+      passes: localStorage.getItem(window.LexiversePasses?.key || "lexiverse-word-passes-v1")
     };
     const completed = { ...(state.completed || {}) };
     const seen = new Set();
@@ -109,6 +122,7 @@
       word.level = level;
       if (record.studied) completed[id] = 1;
       else delete completed[id];
+      window.LexiversePasses?.ensure(id, record.studied ? 2 : 1, "notion-import");
       matched += 1;
       if (level === 2) level2 += 1;
       if (level === 4) level4 += 1;
@@ -130,13 +144,53 @@
     return groups.get(Number(state.group)) || [];
   }
 
-  function relatedWords(id, type) {
+  function relatedEntries(id, type, limit = 4) {
     const seen = new Set();
     return (relationIndex.get(id) || [])
       .filter(item => item.type === type && item.id !== id && !seen.has(item.id) && seen.add(item.id))
       .sort((a, b) => b.strength - a.strength || a.id.localeCompare(b.id, "en"))
-      .slice(0, 5)
-      .map(item => item.id);
+      .slice(0, limit)
+      .map(item => ({ ...item, word: allWordMap.get(item.id) || null }));
+  }
+
+  function relationLabel(type, strength) {
+    if (type === "synonym") return strength >= .92 ? "几乎同义" : strength >= .84 ? "高度接近" : "语义相近";
+    return strength >= .92 ? "强反义" : strength >= .84 ? "明显相反" : "语义对照";
+  }
+
+  function normalizeFamilyStem(value) {
+    return String(value || "").toLowerCase().replace(/[^a-z]/g, "").replace(/(ingly|edly|ation|ition|ment|ness|ence|ance|able|ible|ious|ous|ive|ity|ally|al|ic|ate|ify|ize|ing|ed|ly|s)$/i, "");
+  }
+
+  function familyFor(word) {
+    const curated = (window.LEXICAL_FAMILIES || []).find(family => family.members.some(([id]) => id === word.id));
+    if (curated) {
+      return {
+        root: curated.root,
+        members: curated.members.filter(([id]) => id !== word.id).slice(0, 6).map(([id, meaning]) => ({ id, meaning, word: allWordMap.get(id) || null }))
+      };
+    }
+    const linked = relatedEntries(word.id, "etymology", 6).map(entry => ({
+      id: entry.id,
+      meaning: entry.word?.zh || entry.word?.definition || "同词源关联词",
+      word: entry.word
+    }));
+    if (linked.length) return { root: "词库已核对的同源关系", members: linked };
+    const stem = normalizeFamilyStem(word.id);
+    const derived = stem.length >= 5 ? [...allWordMap.values()]
+      .filter(candidate => candidate.id !== word.id && normalizeFamilyStem(candidate.id) === stem)
+      .slice(0, 6)
+      .map(candidate => ({ id: candidate.id, meaning: candidate.zh || candidate.definition, word: candidate })) : [];
+    if (derived.length) return { root: `${stem} · 同一派生词干`, members: derived };
+    const etymology = window.getLexicalEtymology ? window.getLexicalEtymology(word) : String(word.etymology || "");
+    const origins = [];
+    const originPattern = /(Old French|Old English|Middle English|Modern Latin|Middle Dutch|Latin|Greek|French|Scots|Spanish|Italian|Dutch|Germanic)\s+([a-zA-Z][a-zA-Z-]*)(?:\s*[,;:]?\s*[‘'“"]([^’'”"]+)[’'”"])?/g;
+    for (const match of etymology.matchAll(originPattern)) {
+      if (origins.some(item => item.id === match[2])) continue;
+      origins.push({ id: match[2], meaning: `${match[1]}：${match[3] || "祖源形式，与当前词共享词源"}`, word: null });
+      if (origins.length >= 4) break;
+    }
+    return { root: origins.length ? "祖源词 · 离线词源记录" : "祖源锚点", members: origins };
   }
 
   function localDayStart(timestamp) {
@@ -174,17 +228,32 @@
     { target: 50, bonus: 180, name: "巡航任务" },
     { target: 100, bonus: 500, name: "百词满额" }
   ];
+  const MODE_QUESTS = [
+    { id: "review-10", name: "回收舱", detail: "复习卡完成 10 词", target: 10, sources: ["review-card"], bonus: 80 },
+    { id: "confusable-3", name: "辨析舱", detail: "对比 3 组易混词", target: 3, sources: ["confusable-mastered", "confusable-review"], bonus: 90 },
+    { id: "reading-1", name: "实战舱", detail: "完成 1 篇词汇阅读", target: 1, sources: ["group-reading", "adaptive-reading"], bonus: 100 }
+  ];
+  const CONSTELLATIONS = ["猎户座", "天琴座", "天鹅座", "仙女座", "飞马座", "凤凰座", "北冕座", "天龙座", "船帆座", "天鹰座", "双子座", "鲸鱼座"];
 
   const BADGES = [
     { id: "first-light", icon: "✦", title: "第一束星光", detail: "完成第 1 个单词", test: data => data.completed >= 1 },
     { id: "group-forger", icon: "◈", title: "星座铸造者", detail: "完整点亮 1 个 Group", test: data => data.completedGroups >= 1 },
-    { id: "hundred-day", icon: "100", title: "百词燃料舱", detail: "一天完成 100 个新词", test: data => data.learnedToday >= 100 },
+    { id: "hundred-day", icon: "100", title: "百词燃料舱", detail: "一天学习 100 个不同单词", test: data => data.learnedToday >= 100 },
     { id: "streak-three", icon: "3", title: "三日引擎", detail: "连续学习 3 天", test: data => data.streak >= 3 },
     { id: "streak-seven", icon: "7", title: "一周不坠轨", detail: "连续学习 7 天", test: data => data.streak >= 7 },
     { id: "reader-three", icon: "R3", title: "原文点火", detail: "完成 3 篇 Group 阅读", test: data => data.readings >= 3 },
     { id: "reader-thirty", icon: "R30", title: "语境猎手", detail: "完成 30 篇 Group 阅读", test: data => data.readings >= 30 },
     { id: "accuracy-ten", icon: "✓", title: "精准反应", detail: "累计答对 10 篇 Group 阅读", test: data => data.correctReadings >= 10 },
-    { id: "thousand", icon: "1K", title: "千词星云", detail: "累计完成 1000 个 SAT 单词", test: data => data.completed >= 1000 }
+    { id: "thousand", icon: "1K", title: "千词星云", detail: "累计完成 1000 个 SAT 单词", test: data => data.completed >= 1000 },
+    { id: "sprint-one", icon: "10", title: "第一次跃迁", detail: "完成第 1 轮十词冲刺", test: data => data.sprints >= 1 },
+    { id: "sprint-ten", icon: "10×", title: "稳定巡航", detail: "累计完成 10 轮十词冲刺", test: data => data.sprints >= 10 },
+    { id: "constellation-one", icon: "★", title: "点亮星座", detail: "收集并点亮第 1 个星座", test: data => data.constellations >= 1 },
+    { id: "confusable-five", icon: "VS", title: "边界猎手", detail: "分清 5 组易混词", test: data => data.confusable >= 5 },
+    { id: "third-pass-100", icon: "III", title: "三刷引擎", detail: "100 个词累计学习至少 3 遍", test: data => data.passThree >= 100 },
+    { id: "mastery-fifty", icon: "IV", title: "瞬时反应区", detail: "50 个词累计学习至少 4 遍", test: data => data.passFour >= 50 },
+    { id: "streak-thirty", icon: "30", title: "月度航线", detail: "连续学习 30 天", test: data => data.streak >= 30 },
+    { id: "full-galaxy", icon: "∞", title: "全星系点亮", detail: "完成 SAT WordBank 全部单词", test: data => data.completed >= satWords.length },
+    { id: "third-pass-all", icon: "III★", title: "三刷毕业航线", detail: "全部 SAT 单词累计学习至少 3 遍", test: data => data.passThree >= satWords.length }
   ];
 
   function localDateKey(timestamp = Date.now()) {
@@ -194,7 +263,37 @@
 
   function learnedTodayCount() {
     const today = localDayStart(Date.now());
-    return Object.values(state.completed || {}).filter(timestamp => Number(timestamp) > 1000000000000 && localDayStart(timestamp) === today).length;
+    return new Set((state.studyHistory || []).filter(row => localDayStart(row.at) === today).map(row => row.id)).size;
+  }
+
+  function recordStudyActivity(ids, source) {
+    const cleanIds = [...new Set((Array.isArray(ids) ? ids : [ids]).filter(id => wordMap.has(id)))];
+    if (!cleanIds.length) return;
+    const at = Date.now();
+    state.studyHistory = Array.isArray(state.studyHistory) ? state.studyHistory : [];
+    cleanIds.forEach(id => state.studyHistory.push({ id, source, at }));
+    if (state.studyHistory.length > 12000) state.studyHistory = state.studyHistory.slice(-12000);
+    persist();
+  }
+
+  function todayModeSessions(sources) {
+    const today = localDayStart(Date.now());
+    return new Set((state.studyHistory || [])
+      .filter(row => localDayStart(row.at) === today && sources.includes(row.source))
+      .map(row => `${row.source}|${row.at}`)).size;
+  }
+
+  function claimModeQuestRewards() {
+    state.modeRewards = state.modeRewards || {};
+    const key = localDateKey();
+    const claimed = new Set(state.modeRewards[key] || []);
+    const completed = MODE_QUESTS.filter(quest => todayModeSessions(quest.sources) >= quest.target && !claimed.has(quest.id));
+    completed.forEach(quest => {
+      claimed.add(quest.id);
+      state.totalXp = (Number(state.totalXp) || 0) + quest.bonus;
+    });
+    state.modeRewards[key] = [...claimed];
+    return completed;
   }
 
   function claimDailyMissionRewards(learnedToday) {
@@ -221,8 +320,10 @@
   function renderRewardBar() {
     const learnedToday = learnedTodayCount();
     const pendingRewards = claimDailyMissionRewards(learnedToday);
-    if (pendingRewards.length) {
-      rewardMessage = `✦ 已补发 ${pendingRewards.map(mission => mission.name).join("、")}奖励，共 ${pendingRewards.reduce((sum, mission) => sum + mission.bonus, 0)} XP。`;
+    const pendingModeRewards = claimModeQuestRewards();
+    if (pendingRewards.length || pendingModeRewards.length) {
+      const allRewards = [...pendingRewards, ...pendingModeRewards];
+      rewardMessage = `✦ ${allRewards.map(item => item.name).join("、")}完成，共获得 ${allRewards.reduce((sum, item) => sum + item.bonus, 0)} XP。`;
       persist();
       setTimeout(triggerRewardBurst, 0);
     }
@@ -253,6 +354,26 @@
     document.querySelectorAll("[data-mission]").forEach(mission => {
       mission.classList.toggle("complete", learnedToday >= Number(mission.dataset.mission));
     });
+    const questBox = document.getElementById("study-mode-quests");
+    if (questBox) questBox.innerHTML = MODE_QUESTS.map(quest => {
+      const progress = todayModeSessions(quest.sources);
+      const complete = progress >= quest.target;
+      return `<span class="${complete ? "complete" : ""}"><i>${complete ? "✓" : "◇"}</i><b>${escapeHtml(quest.name)}</b><small>${Math.min(progress, quest.target)}/${quest.target} · ${escapeHtml(quest.detail)} · +${quest.bonus} XP</small></span>`;
+    }).join("");
+    state.constellations = Array.isArray(state.constellations) ? state.constellations : [];
+    const unlockTarget = Math.min(CONSTELLATIONS.length, Math.floor((Number(state.starFragments) || 0) / 5));
+    let constellationChanged = false;
+    while (state.constellations.length < unlockTarget) {
+      state.constellations.push(CONSTELLATIONS[state.constellations.length]);
+      constellationChanged = true;
+    }
+    if (constellationChanged) persist();
+    const constellationBox = document.getElementById("study-constellation-collection");
+    if (constellationBox) {
+      const fragmentProgress = (Number(state.starFragments) || 0) % 5;
+      const nextConstellation = CONSTELLATIONS[state.constellations.length];
+      constellationBox.innerHTML = `<div><span>星图收藏</span><strong>${state.constellations.length} / ${CONSTELLATIONS.length} 已点亮</strong><small>${nextConstellation ? `再收集 ${5 - fragmentProgress} 枚碎片点亮 ${nextConstellation}` : "全部星座已点亮"}</small></div><div class="constellation-fragments" aria-label="星图碎片 ${fragmentProgress} / 5">${Array.from({ length: 5 }, (_, index) => `<i class="${index < fragmentProgress ? "lit" : ""}">✦</i>`).join("")}</div>${state.constellations.length ? `<p>最新收藏 · <b>${escapeHtml(state.constellations[state.constellations.length - 1])}</b></p>` : `<p>每完成一轮 10 词冲刺，获得 1 枚星图碎片。</p>`}`;
+    }
   }
 
   function renderBadges(metrics) {
@@ -281,9 +402,8 @@
   function renderStats() {
     if (!statCards || !groupProgressGrid) return;
     const completedIds = new Set(Object.keys(state.completed || {}).filter(id => state.completed[id]));
-    const timestamps = [...completedIds].map(id => Number(state.completed[id])).filter(Number.isFinite);
-    const today = localDayStart(Date.now());
-    const learnedToday = timestamps.filter(timestamp => timestamp > 1000000000000 && localDayStart(timestamp) === today).length;
+    const timestamps = (state.studyHistory || []).map(row => Number(row.at)).filter(Number.isFinite);
+    const learnedToday = learnedTodayCount();
     const progressRows = groupNumbers.map(number => {
       const words = groups.get(number) || [];
       const learned = words.filter(word => completedIds.has(word.id)).length;
@@ -291,18 +411,33 @@
       const averageLevel = words.length
         ? levels.reduce((sum, count, index) => sum + count * (index + 1), 0) / words.length
         : 0;
-      return { number, total: words.length, learned, levels, averageLevel, percent: words.length ? Math.round(learned / words.length * 100) : 0 };
+      const averagePasses = words.length
+        ? words.reduce((sum, word) => sum + (window.LexiversePasses?.get(word.id) || 0), 0) / words.length
+        : 0;
+      return { number, total: words.length, learned, levels, averageLevel, averagePasses, percent: words.length ? Math.round(learned / words.length * 100) : 0 };
     });
     const completedGroups = progressRows.filter(row => row.total && row.learned === row.total).length;
     const strongerWords = satWords.filter(word => Number(levelStore[word.id] || word.level || 1) >= 3).length;
     const streak = learningStreak(timestamps);
     const overallPercent = satWords.length ? Math.round(completedIds.size / satWords.length * 100) : 0;
+    const totalPasses = satWords.reduce((sum, word) => sum + (window.LexiversePasses?.get(word.id) || 0), 0);
+    const passCounts = satWords.map(word => window.LexiversePasses?.get(word.id) || 0);
+    const passOne = passCounts.filter(count => count >= 1).length;
+    const passTwo = passCounts.filter(count => count >= 2).length;
+    const passThree = passCounts.filter(count => count >= 3).length;
+    const passFour = passCounts.filter(count => count >= 4).length;
+    let confusableMastered = 0;
+    try { confusableMastered = Object.keys(JSON.parse(localStorage.getItem("lexiverse-confusable-study-v1"))?.mastered || {}).length; } catch {}
     const readingHistory = Array.isArray(state.readingHistory) ? state.readingHistory : [];
     statCards.innerHTML = `
-      <article><span>已背单词</span><strong>${completedIds.size}<small> / ${satWords.length}</small></strong><p>${overallPercent}% complete</p></article>
+      <article><span>已背单词</span><strong>${completedIds.size}<small> / ${satWords.length}</small></strong><p>累计学习 ${totalPasses} 遍 · ${overallPercent}% complete</p></article>
       <article><span>完成 Group</span><strong>${completedGroups}<small> / ${groupNumbers.length}</small></strong><p>${progressRows.filter(row => row.learned > 0 && row.learned < row.total).length} 个进行中</p></article>
-      <article><span>今日新背</span><strong>${learnedToday}<small> 词</small></strong><p>${learnedToday >= 100 ? "100 词目标已达成" : `再背 ${Math.max(0, 100 - learnedToday)} 词完成今日目标`}</p></article>
+      <article><span>今日学习</span><strong>${learnedToday}<small> 词</small></strong><p>${learnedToday >= 100 ? "100 词目标已达成" : `再学习 ${Math.max(0, 100 - learnedToday)} 个不同单词完成目标`}</p></article>
       <article><span>连续学习</span><strong>${streak}<small> 天</small></strong><p>熟悉度 ≥ 3：${strongerWords} 词</p></article>`;
+    const passJourney = document.getElementById("study-pass-journey");
+    if (passJourney) passJourney.innerHTML = `<div class="pass-journey-heading"><div><strong>四阶段征服路线</strong><span>目标不是“见过”，而是把单词推进到原文中秒反应</span></div><small>三刷覆盖 ${Math.round(passThree / Math.max(1, satWords.length) * 100)}%</small></div><div class="pass-journey-grid">${[
+      ["I", "开图", passOne, "完成第 1 遍"], ["II", "稳固", passTwo, "完成第 2 遍"], ["III", "实战", passThree, "完成第 3 遍"], ["IV", "秒反应", passFour, "完成 4 遍以上"]
+    ].map(([roman, title, count, detail]) => `<article><i>${roman}</i><div><strong>${title}</strong><span>${detail}</span></div><b>${count}<small> / ${satWords.length}</small></b><em><u style="--journey-progress:${count / Math.max(1, satWords.length) * 100}%"></u></em></article>`).join("")}</div>`;
     document.getElementById("study-overall-label").textContent = `${completedIds.size} / ${satWords.length} · ${overallPercent}%`;
     document.getElementById("study-progress-fill").style.width = `${overallPercent}%`;
     const currentRow = progressRows.find(row => row.number === Number(state.group));
@@ -320,7 +455,12 @@
       learnedToday,
       streak,
       readings: readingHistory.length,
-      correctReadings: readingHistory.filter(record => record.correct).length
+      correctReadings: readingHistory.filter(record => record.correct).length,
+      sprints: Number(state.totalSprints) || 0,
+      constellations: state.constellations.length,
+      confusable: confusableMastered,
+      passThree,
+      passFour
     });
     const visibleRows = progressRows.filter(row => {
       if (groupProgressFilter === "active") return row.learned > 0 && row.learned < row.total;
@@ -328,9 +468,9 @@
       return true;
     });
     groupProgressGrid.innerHTML = visibleRows.length ? visibleRows.map(row => `
-      <button type="button" data-progress-group="${row.number}" class="${row.learned === row.total ? "complete" : row.learned ? "active" : ""} ${row.number === Number(state.group) ? "current" : ""}" aria-label="Group ${row.number}，已背 ${row.learned} / ${row.total}，平均熟悉度 ${row.averageLevel.toFixed(1)}，L1 到 L5 分别为 ${row.levels.join("、")}">
+      <button type="button" data-progress-group="${row.number}" class="${row.learned === row.total ? "complete" : row.learned ? "active" : ""} ${row.number === Number(state.group) ? "current" : ""}" aria-label="Group ${row.number}，已背 ${row.learned} / ${row.total}，平均熟悉度 ${row.averageLevel.toFixed(1)}，平均学习 ${row.averagePasses.toFixed(1)} 遍，L1 到 L5 分别为 ${row.levels.join("、")}">
         <div class="group-progress-top"><span>G${row.number}</span><strong>${row.learned}/${row.total}</strong></div>
-        <span class="group-level-average">平均熟悉度 ${row.averageLevel.toFixed(1)}</span>
+        <span class="group-level-average">熟悉度 ${row.averageLevel.toFixed(1)} · 平均 ${row.averagePasses.toFixed(1)} 遍</span>
         <div class="group-level-bar" aria-hidden="true">${row.levels.map((count, index) => `<i class="level-${index + 1}" style="--level-width:${row.total ? count / row.total * 100 : 0}%"></i>`).join("")}</div>
         <div class="group-level-counts" aria-hidden="true">${row.levels.map((count, index) => `<span class="level-${index + 1}">L${index + 1} <b>${count}</b></span>`).join("")}</div>
         <i class="group-completion-bar" style="--group-progress:${row.percent}%" aria-hidden="true"></i>
@@ -398,39 +538,90 @@
     return state.splits[key];
   }
 
+  function relationCards(entries, type) {
+    if (!entries.length) return `<p class="study-relation-empty">暂无足够明确的${type === "synonym" ? "同义" : "反义"}关系，不为凑数量强行连线。</p>`;
+    return entries.map(entry => {
+      const percent = Math.round(entry.strength * 100);
+      const meaning = entry.word?.zh || entry.word?.definition || "点击后在上方星系查看";
+      return `<button type="button" class="study-relation-card" data-study-related="${escapeHtml(entry.id)}" style="--relation-strength:${percent}%">
+        <div><strong>${escapeHtml(entry.id)}</strong><small>${escapeHtml(entry.word?.pos || "related word")}</small><b>${percent}%</b></div>
+        <p>${escapeHtml(meaning)}</p>
+        <i><span></span></i><em>${relationLabel(type, entry.strength)}</em>
+      </button>`;
+    }).join("");
+  }
+
+  function renderStudyFlow() {
+    const words = currentWords();
+    const sprintValue = Math.max(0, Math.min(9, Number(state.sprintProgress) || 0));
+    const count = document.getElementById("study-sprint-count");
+    const fill = document.getElementById("study-sprint-fill");
+    const preview = document.getElementById("study-next-preview");
+    if (count) count.textContent = `${sprintValue} / 10 · 已完成 ${Number(state.totalSprints) || 0} 轮`;
+    if (fill) fill.style.width = `${sprintValue * 10}%`;
+    const next = words[state.index + 1];
+    const groupPosition = groupNumbers.indexOf(Number(state.group));
+    const nextGroup = groupNumbers[groupPosition + 1];
+    if (preview) preview.textContent = next
+      ? `按 1 / 2 / 3 / 4 / 5 自动前进 · 下一颗：${next.id} · ${next.zh || next.definition || "继续保持节奏"}`
+      : nextGroup
+        ? `本组最后一词 · 完成后自动进入 Group ${nextGroup}`
+        : "已经到达最后一颗单词";
+  }
+
   function renderWord() {
     const words = currentWords();
     if (!words.length) return;
     state.index = Math.max(0, Math.min(Number(state.index) || 0, words.length - 1));
     const word = words[state.index];
-    const synonyms = relatedWords(word.id, "synonym");
-    const antonyms = relatedWords(word.id, "antonym");
+    const synonyms = relatedEntries(word.id, "synonym", 4);
+    const antonyms = relatedEntries(word.id, "antonym", 4);
+    const family = familyFor(word);
     const completed = Boolean(state.completed[word.id]);
+    const passCount = window.LexiversePasses?.get(word.id) || (completed ? 2 : 1);
     document.getElementById("study-word-position").textContent = `${state.index + 1} / ${words.length}`;
     wordCard.innerHTML = `
-      <div class="study-word-meta"><span>词性 · ${escapeHtml(word.pos)}</span><span>${escapeHtml(word.group)}</span><span class="${completed ? "is-complete" : ""}">${completed ? "已背" : "待学习"}</span></div>
+      <div class="study-word-meta"><span>词性 · ${escapeHtml(word.pos)}</span><span>${escapeHtml(word.group)}</span><span class="${completed ? "is-complete" : ""}">${completed ? "本轮已完成" : "待本轮"}</span><span class="study-pass-count">累计 ${passCount} 遍</span></div>
       <h3>${escapeHtml(word.id)}</h3>
       <p class="study-phonetic">${escapeHtml(word.phonetic)}</p>
       <p class="study-definition">${escapeHtml(word.definition)}</p>
       <p class="study-meaning">${escapeHtml(word.zh)}</p>
-      <div class="study-familiarity"><strong>我的熟悉度</strong><div role="group" aria-label="Group 学习熟悉度 1 到 5">${[1, 2, 3, 4, 5].map(level => `<button type="button" data-study-level="${level}" class="${Number(word.level) === level ? "active" : ""}" aria-label="熟悉度 ${level}">${level}</button>`).join("")}</div></div>
+      <div class="study-inline-flow" role="group" aria-label="熟悉度评级并进入下一词">
+        <span><b>我的熟悉度 · 评级后自动进入下一词</b><small>直接按 1–5；← → 浏览</small></span>
+        ${[[1, "陌生"], [2, "模糊"], [3, "想起"], [4, "掌握"], [5, "秒反应"]].map(([level, label]) => `<button type="button" data-inline-flow-level="${level}" class="level-${level} ${Number(word.level) === level ? "active" : ""}" aria-label="熟悉度 ${level}，${label}，保存并进入下一词"><kbd>${level}</kbd>${label}</button>`).join("")}
+      </div>
       <blockquote>${escapeHtml(word.example)}</blockquote>
-      <div class="study-relation-row"><strong>同义词</strong><span>${synonyms.length ? synonyms.map(escapeHtml).join(" · ") : "暂无明确记录"}</span></div>
-      <div class="study-relation-row"><strong>反义词</strong><span>${antonyms.length ? antonyms.map(escapeHtml).join(" · ") : "暂无明确记录"}</span></div>
+      <section class="study-semantic-map">
+        <div class="study-semantic-heading"><div><strong>语义关系图</strong><span>百分比越高，语义关系越强</span></div><b>${escapeHtml(word.id)}</b></div>
+        <div class="study-semantic-columns">
+          <article class="synonym"><header><i></i><strong>同义词 · 靠近</strong></header>${relationCards(synonyms, "synonym")}</article>
+          <article class="antonym"><header><i></i><strong>反义词 · 相反</strong></header>${relationCards(antonyms, "antonym")}</article>
+        </div>
+        <small class="study-semantic-tip">点击关联词只会展开上方星系，当前背词卡不会跳走。</small>
+      </section>
+      <section class="study-word-family">
+        <div class="study-family-heading"><div><strong>同源词族</strong><span>从一个词根扩展一串词</span></div><b>${escapeHtml(family.root)}</b></div>
+        <div class="study-family-grid">${family.members.length ? family.members.map(member => member.word
+          ? `<button type="button" data-study-family="${escapeHtml(member.id)}"><strong>${escapeHtml(member.id)}</strong><small>${escapeHtml(member.word.pos || "word")}</small><span>${escapeHtml(member.meaning)}</span></button>`
+          : `<div><strong>${escapeHtml(member.id)}</strong><small>词库外同源词</small><span>${escapeHtml(member.meaning)}</span></div>`).join("")
+          : `<div class="study-family-anchor"><strong>${escapeHtml(word.id)} 的祖源</strong><span>${escapeHtml(window.getLexicalEtymology ? window.getLexicalEtymology(word) : word.etymology || "尚待核对")}</span></div>`}</div>
+      </section>
       <div class="study-origin"><strong>词源 · 拉丁语优先</strong><p>${escapeHtml(window.getLexicalEtymology ? window.getLexicalEtymology(word) : (word.etymology || "暂未找到可靠词源记录。"))}</p><strong>词源记忆</strong><p>${escapeHtml(word.memory || `把 ${word.id} 与例句语境绑定记忆。`)}</p></div>
       <button class="study-open-galaxy" type="button">在单词星系中查看关系</button>`;
     wordCard.querySelector(".study-open-galaxy").addEventListener("click", () => {
       window.dispatchEvent(new CustomEvent("lexiverse-select-word", { detail: { id: word.id } }));
       document.getElementById("word-detail")?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
-    wordCard.querySelectorAll("[data-study-level]").forEach(button => button.addEventListener("click", () => {
-      word.level = Number(button.dataset.studyLevel);
-      levelStore[word.id] = word.level;
-      localStorage.setItem("lexiverse-levels", JSON.stringify(levelStore));
-      window.dispatchEvent(new CustomEvent("lexiverse-level-change", { detail: { id: word.id, level: word.level, source: "group-study" } }));
-      renderWord();
+    wordCard.querySelectorAll("[data-inline-flow-level]").forEach(button => button.addEventListener("click", () => {
+      rateAndAdvance(Number(button.dataset.inlineFlowLevel));
     }));
-    wordStrip.innerHTML = words.map((item, index) => `<button type="button" data-study-index="${index}" class="${index === state.index ? "active" : ""} ${state.completed[item.id] ? "complete" : ""}" aria-label="${escapeHtml(item.id)}">${index + 1}</button>`).join("");
+    wordCard.querySelectorAll("[data-study-related], [data-study-family]").forEach(button => button.addEventListener("click", () => {
+      const id = button.dataset.studyRelated || button.dataset.studyFamily;
+      window.dispatchEvent(new CustomEvent("lexiverse-select-word", { detail: { id, source: "group-study-relation" } }));
+      button.classList.add("opened");
+      setTimeout(() => button.classList.remove("opened"), 700);
+    }));
+    wordStrip.innerHTML = words.map((item, index) => `<button type="button" data-study-index="${index}" class="${index === state.index ? "active" : ""} ${state.completed[item.id] ? "complete" : ""}" aria-label="${escapeHtml(item.id)}，累计 ${window.LexiversePasses?.get(item.id) || 1} 遍">${index + 1}</button>`).join("");
     wordStrip.querySelectorAll("[data-study-index]").forEach(button => button.addEventListener("click", () => {
       state.index = Number(button.dataset.studyIndex);
       persist();
@@ -438,10 +629,10 @@
     }));
     const completedCount = words.filter(item => state.completed[item.id]).length;
     document.getElementById("study-group-progress").textContent = `Group ${state.group}：已背 ${completedCount} / ${words.length}`;
-    document.getElementById("study-complete-word").textContent = completed ? "已背 · 下一个" : "记住了 · +10 XP";
     persist();
     renderStats();
     renderRewardBar();
+    renderStudyFlow();
     window.dispatchEvent(new CustomEvent("lexiverse-select-word", { detail: { id: word.id, source: "group-study" } }));
   }
 
@@ -662,6 +853,7 @@
     state.readingRewarded = Array.isArray(state.readingRewarded) ? state.readingRewarded : [];
     if (!state.readingRewarded.includes(key)) {
       state.readingRewarded.push(key);
+      window.LexiversePasses?.increment(words.map(word => word.id), "group-reading");
       const gain = record.correct ? 20 : 8;
       state.totalXp = (Number(state.totalXp) || 0) + gain;
       rewardMessage = `${record.correct ? "原文反应正确" : "完成一次原文训练"}，阅读能量 +${gain} XP。`;
@@ -729,6 +921,7 @@
     state.index = Math.min(Number(state.index) || 0, Math.max(0, currentWords().length - 1));
     renderWord();
     renderReadings(forceSplit);
+    window.dispatchEvent(new CustomEvent("lexiverse-group-change", { detail: { group: Number(state.group) } }));
   }
 
   groupSelect.innerHTML = groupNumbers.map(number => `<option value="${number}">Group ${number}</option>`).join("");
@@ -758,31 +951,124 @@
     state.index = Math.min(currentWords().length - 1, Number(state.index) + 1);
     renderWord();
   });
-  document.getElementById("study-complete-word").addEventListener("click", () => {
+
+  function rateAndAdvance(level) {
     const word = currentWords()[state.index];
+    if (!word || ![1, 2, 3, 4, 5].includes(Number(level))) return;
+    word.level = Number(level);
+    const passCounts = window.LexiversePasses?.increment(word.id, "group-study-flow") || {};
+    const passCount = Number(passCounts[word.id]) || 1;
+    levelStore[word.id] = word.level;
+    localStorage.setItem("lexiverse-levels", JSON.stringify(levelStore));
+    window.dispatchEvent(new CustomEvent("lexiverse-level-change", { detail: { id: word.id, level: word.level, source: "group-study-flow" } }));
     let newlyCompletedId = "";
-    if (word && !state.completed[word.id]) {
+    const wasCompleted = Boolean(state.completed[word.id]);
+    if (!wasCompleted) {
       state.completed[word.id] = Date.now();
       newlyCompletedId = word.id;
-      sessionCombo += 1;
-      const comboBonus = sessionCombo > 0 && sessionCombo % 5 === 0 ? 5 : 0;
-      state.totalXp = (Number(state.totalXp) || 0) + 10 + comboBonus;
-      state.bestCombo = Math.max(Number(state.bestCombo) || 0, sessionCombo);
-      const missionRewards = claimDailyMissionRewards(learnedTodayCount());
-      rewardMessage = missionRewards.length
-        ? `✦ ${missionRewards.map(mission => mission.name).join("、")}完成！额外获得 ${missionRewards.reduce((sum, mission) => sum + mission.bonus, 0)} XP。`
-        : comboBonus
-        ? `连击 ${sessionCombo}！额外获得 ${comboBonus} XP，继续保持。`
-        : sessionCombo === 1
-          ? `拿下 ${word.id}，星系能量 +10 XP。`
-          : `连续记住 ${sessionCombo} 个词，再坚持 ${5 - sessionCombo % 5 || 5} 个触发奖励。`;
-    } else if (word) {
-      rewardMessage = `${word.id} 已经点亮，继续前往下一个词。`;
     }
-    if (state.index < currentWords().length - 1) state.index += 1;
-    renderWord();
+    sessionCombo += 1;
+    state.sprintProgress = (Number(state.sprintProgress) || 0) + 1;
+    const comboBonus = sessionCombo % 5 === 0 ? 5 : 0;
+    let sprintBonus = 0;
+    let unlockedFragment = false;
+    if (state.sprintProgress >= 10) {
+      state.sprintProgress = 0;
+      state.totalSprints = (Number(state.totalSprints) || 0) + 1;
+      state.starFragments = (Number(state.starFragments) || 0) + 1;
+      sprintBonus = 25;
+      unlockedFragment = true;
+    }
+    const baseGain = wasCompleted ? 4 : 10;
+    state.totalXp = (Number(state.totalXp) || 0) + baseGain + comboBonus + sprintBonus;
+    state.bestCombo = Math.max(Number(state.bestCombo) || 0, sessionCombo);
+    const missionRewards = claimDailyMissionRewards(learnedTodayCount());
+    if (missionRewards.length) {
+      rewardMessage = `✦ ${missionRewards.map(mission => mission.name).join("、")}完成！额外获得 ${missionRewards.reduce((sum, mission) => sum + mission.bonus, 0)} XP。`;
+    } else if (unlockedFragment) {
+      rewardMessage = `✦ 十词跃迁完成！获得 1 枚星图碎片与 ${sprintBonus} XP。`;
+    } else if (comboBonus) {
+      rewardMessage = `连击 ${sessionCombo}！本词 ${baseGain} XP + 连击奖励 ${comboBonus} XP。`;
+    } else if (level <= 2) {
+      rewardMessage = `${word.id} 已放入重点复习轨道 · +${baseGain} XP。`;
+    } else if (level === 5) {
+      rewardMessage = `${word.id} 已达到秒反应 · +${baseGain} XP。`;
+    } else {
+      rewardMessage = `${wasCompleted ? "复习" : "拿下"} ${word.id} · +${baseGain} XP。`;
+    }
+    rewardMessage += ` · 累计第 ${passCount} 遍。`;
+    const words = currentWords();
+    let changedGroup = false;
+    if (state.index < words.length - 1) {
+      state.index += 1;
+    } else {
+      const position = groupNumbers.indexOf(Number(state.group));
+      const nextGroup = groupNumbers[position + 1];
+      if (nextGroup) {
+        const completedGroup = state.group;
+        state.group = nextGroup;
+        const nextWords = currentWords();
+        const firstUnfinished = nextWords.findIndex(item => !state.completed[item.id]);
+        state.index = firstUnfinished >= 0 ? firstUnfinished : 0;
+        changedGroup = true;
+        rewardMessage = `Group ${completedGroup} 航程结束，已无缝进入 Group ${nextGroup}。`;
+      }
+    }
+    persist();
+    if (changedGroup) renderGroup();
+    else renderWord();
     if (rewardMessage.startsWith("✦")) triggerRewardBurst();
     if (newlyCompletedId) window.dispatchEvent(new CustomEvent("lexiverse-study-complete", { detail: { id: newlyCompletedId } }));
+  }
+
+  window.addEventListener("lexiverse-pass-change", event => {
+    const source = event.detail?.source;
+    const trackable = ["group-study-flow", "group-reading", "confusable-mastered", "confusable-review", "review-card", "adaptive-reading"];
+    if (!trackable.includes(source)) return;
+    recordStudyActivity(event.detail?.ids || [], source);
+    if (["review-card", "adaptive-reading"].includes(source)) setTimeout(() => {
+      renderRewardBar();
+      renderStats();
+    }, 0);
+  });
+
+  window.addEventListener("lexiverse-confusable-complete", event => {
+    const mastered = Boolean(event.detail?.mastered);
+    const gain = mastered ? (event.detail?.firstMastery ? 15 : 5) : 2;
+    state.totalXp = (Number(state.totalXp) || 0) + gain;
+    rewardMessage = mastered ? `易混词边界建立成功 · +${gain} XP。` : `已标记为需要再次对比 · +${gain} XP。`;
+    persist();
+    renderRewardBar();
+  });
+
+  window.addEventListener("lexiverse-level-change", event => {
+    if (!event.detail?.id || event.detail.source === "group-study-flow") return;
+    const word = wordMap.get(event.detail.id);
+    if (!word) return;
+    word.level = Number(event.detail.level) || 1;
+    levelStore[word.id] = word.level;
+    if (currentWords()[state.index]?.id === word.id) renderWord();
+    else renderStats();
+  });
+
+  document.addEventListener("keydown", event => {
+    const target = event.target;
+    if (target instanceof HTMLElement && (target.matches("input, textarea, select") || target.isContentEditable)) return;
+    const section = document.getElementById("group-study");
+    const rect = section?.getBoundingClientRect();
+    if (!rect || rect.bottom < 120 || rect.top > window.innerHeight - 120) return;
+    if (["1", "2", "3", "4", "5"].includes(event.key)) {
+      event.preventDefault();
+      rateAndAdvance(Number(event.key));
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      state.index = Math.max(0, Number(state.index) - 1);
+      renderWord();
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      state.index = Math.min(currentWords().length - 1, Number(state.index) + 1);
+      renderWord();
+    }
   });
   document.getElementById("reshuffle-group-readings").addEventListener("click", () => renderReadings(true));
   document.querySelectorAll("[data-reading-pass]").forEach(button => button.addEventListener("click", () => {
@@ -820,6 +1106,11 @@
       else localStorage.setItem("lexiverse-levels", backup.levels);
       if (backup.groupStudy === null) localStorage.removeItem("lexiverse-group-study-v1");
       else localStorage.setItem("lexiverse-group-study-v1", backup.groupStudy);
+      if (backup.passes === null) localStorage.removeItem(window.LexiversePasses?.key || "lexiverse-word-passes-v1");
+      else {
+        localStorage.setItem(window.LexiversePasses?.key || "lexiverse-word-passes-v1", backup.passes);
+        try { window.LexiversePasses?.restore(JSON.parse(backup.passes), "notion-import-undo"); } catch {}
+      }
       localStorage.removeItem("lexiverse-notion-import-backup-v1");
       localStorage.removeItem("lexiverse-notion-import-report-v1");
       window.location.reload();

@@ -117,7 +117,17 @@
     { root: "Latin caedere / incisus · cut", members: [["incisive", "尖锐透彻的"], ["incision", "切口"], ["concise", "简洁的；像被剪短"], ["precise", "精确的；切定边界"], ["decide", "决定；切断其他选择"]] },
     { root: "Latin cupidus · desirous", members: [["cupidity", "贪婪"], ["Cupid", "爱神；欲望的象征"], ["covet", "贪求"], ["concupiscence", "强烈欲望"]] },
     { root: "Latin ira · anger", members: [["irascible", "易怒的"], ["ire", "愤怒"], ["irate", "愤怒的"]] },
-    { root: "Latin pro + laxus · flowing forth", members: [["prolix", "冗长的"], ["prolixity", "冗长"], ["lax", "松弛的；不严格的"], ["relax", "放松"]] }
+    { root: "Latin pro + laxus · flowing forth", members: [["prolix", "冗长的"], ["prolixity", "冗长"], ["lax", "松弛的；不严格的"], ["relax", "放松"]] },
+    { root: "Latin salire · leap", members: [["salient", "显著的；像跳出来一样突出"], ["salience", "显著性；突出程度"], ["saliently", "显著地"], ["sally", "突围；突然冲出（远亲词）"]] },
+    { root: "Latin plicare · fold", members: [["accomplice", "同谋；共同卷入者"], ["complicity", "共谋；牵连"], ["complicate", "使复杂；折叠缠绕在一起"], ["complex", "复杂的；交织的"], ["explicate", "解释；把折叠的意思展开"]] },
+    { root: "Old English witan · know", members: [["unwitting", "不知情的"], ["wit", "才智；理解力"], ["witting", "知情的；故意的"], ["unwittingly", "不知不觉地"], ["witness", "见证者；原义为知道事实的人"]] },
+    { root: "Old French danter / Latin domitare · tame", members: [["undaunted", "无畏的；没有被吓服"], ["daunt", "使畏惧"], ["daunting", "令人畏惧的"], ["dauntless", "无所畏惧的"], ["daunted", "感到畏惧的"]] },
+    { root: "Greek labyrinthos · maze", members: [["labyrinthine", "迷宫般复杂的"], ["labyrinth", "迷宫；错综复杂的事物"], ["labyrinthian", "迷宫般的"], ["labyrinthitis", "迷路炎；内耳迷路的炎症"]] },
+    { root: "Greek phlegma · inflammation / humor", members: [["phlegmatic", "冷静迟缓的；古代指黏液质的"], ["phlegm", "痰；古代四体液之一"], ["phlegmatically", "冷淡沉着地"], ["phlegmy", "多痰的"]] },
+    { root: "English cast · throw / direct", members: [["downcast", "沮丧的；目光向下的"], ["cast", "投掷；投射"], ["forecast", "预报；预先投射"], ["broadcast", "广播；向四方撒播"], ["outcast", "被排斥者；被抛出去的人"]] },
+    { root: "Old English heawan · cut", members: [["hew to", "严格遵守；紧贴一条线砍削"], ["hew", "砍；劈"], ["hewn", "砍成的；开凿的"], ["rough-hewn", "粗凿的；粗犷的"]] },
+    { root: "Old English gieldan · pay / give", members: [["yield", "产生；让步；交出"], ["yielding", "柔顺的；会让步的"], ["unyielding", "不屈服的；坚硬的"], ["yielded", "产生了；让步了"]] },
+    { root: "Latin tractare · handle / deal with", members: [["entreat", "恳求；原义为对待、交涉"], ["treat", "对待；处理"], ["treatment", "对待方式；治疗"], ["treaty", "条约；协商处理的结果"], ["tractable", "易处理的；可驾驭的"]] }
   ];
 
   const etymologyOverrides = {
