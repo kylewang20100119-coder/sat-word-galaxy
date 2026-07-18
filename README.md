@@ -8,15 +8,6 @@
   把单词表变成一片可以探索、可以复习、也可以征服的星系。
 </p>
 
-<p align="center">
-  <a href="https://kylewang20100119-coder.github.io/sat-word-galaxy/"><strong>🌌 打开在线版</strong></a>
-  &nbsp;·&nbsp;
-  <a href="#第一次使用只做这三步"><strong>第一次使用</strong></a>
-  &nbsp;·&nbsp;
-  <a href="#三遍背词是怎样工作的"><strong>三遍学习法</strong></a>
-  &nbsp;·&nbsp;
-  <a href="#学习记录与备份"><strong>保存进度</strong></a>
-</p>
 
 Lexiverse 不是一张从 A 排到 Z 的单词表。
 
