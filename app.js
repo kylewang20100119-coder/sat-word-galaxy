@@ -29,13 +29,16 @@
   const wordMap = new Map(words.map(word => [word.id, word]));
   const colors = { synonym: "#42d6da", antonym: "#ff765f", etymology: "#a990ff", prefix: "#f2c14e" };
   const typeNames = { synonym: "同义词", antonym: "反义词", etymology: "同词源", prefix: "同前缀" };
+  const GALAXY_WORD_FONT_SIZE = 14;
   const stage = document.getElementById("galaxy-stage");
   const canvas = document.getElementById("galaxy-canvas");
   const ctx = canvas.getContext("2d");
   const detail = document.getElementById("word-detail");
   const status = document.getElementById("network-status");
   const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let dpr = Math.min(devicePixelRatio || 1, 2);
+  // A restrained pixel ratio keeps canvas text crisp without making every frame
+  // unnecessarily expensive on Retina displays.
+  let dpr = Math.min(devicePixelRatio || 1, 1.35);
   let width = 0, height = 0, animationFrame;
   let selectedId = "benevolent";
   let hoveredId = null;
@@ -44,17 +47,25 @@
   let nodes = [];
   let graphWords = [];
   let graphLinks = [];
+  let fadingLinks = [];
   let density = "compact";
   let catalog = "all";
   const densitySettings = {
-    compact: { maxNodes: 28, directLimit: 12, contextEdges: false },
-    standard: { maxNodes: 44, directLimit: 18, contextEdges: true },
-    rich: { maxNodes: 64, directLimit: 24, contextEdges: true }
+    compact: { maxNodes: 22, directLimit: 10, contextEdges: false },
+    standard: { maxNodes: 34, directLimit: 15, contextEdges: true },
+    rich: { maxNodes: 48, directLimit: 20, contextEdges: true }
   };
   let camera = { x: 0, y: 0, scale: 1 };
   let targetCamera = { x: 0, y: 0, scale: 1 };
   let orbit = { yaw: 0, pitch: -.08, targetYaw: 0, targetPitch: -.08, yawVelocity: 0, pitchVelocity: 0 };
+  let graphMorph = { startedAt: 0, duration: 0, direction: 1, yaw: 0, pitch: 0, roll: 0 };
+  let focusPulse = 0;
+  let detailRenderToken = 0;
   let dragging = false, moved = false, lastPointer = null;
+
+  function requestDraw() {
+    if (!animationFrame) animationFrame = requestAnimationFrame(draw);
+  }
 
   function hash(value) {
     let h = 2166136261;
@@ -62,10 +73,143 @@
     return (h >>> 0) / 4294967295;
   }
 
+  function clamp01(value) { return Math.max(0, Math.min(1, value)); }
+  function smootherStep(value) {
+    const t = clamp01(value);
+    return t * t * t * (t * (t * 6 - 15) + 10);
+  }
+  function vectorLength(vector) { return Math.hypot(vector.x, vector.y, vector.z); }
+  function normalizeVector(vector, fallback = { x: 1, y: 0, z: 0 }) {
+    const length = vectorLength(vector);
+    return length > .0001
+      ? { x: vector.x / length, y: vector.y / length, z: vector.z / length }
+      : { ...fallback };
+  }
+  function crossVector(a, b) {
+    return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x };
+  }
+  function slerpDirection(from, to, progress) {
+    const a = normalizeVector(from);
+    const b = normalizeVector(to, a);
+    const rawDot = a.x * b.x + a.y * b.y + a.z * b.z;
+    if (rawDot < -.995) {
+      // Antipodal points have no unique shortest arc. Pick a stable orthogonal
+      // axis so a node never collapses through the centre halfway through.
+      const reference = Math.abs(a.y) < .82 ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
+      const axis = normalizeVector(crossVector(a, reference), { x: 0, y: 0, z: 1 });
+      const angle = Math.PI * progress;
+      const cosine = Math.cos(angle), sine = Math.sin(angle);
+      const axisDot = axis.x * a.x + axis.y * a.y + axis.z * a.z;
+      return {
+        x: a.x * cosine + (axis.y * a.z - axis.z * a.y) * sine + axis.x * axisDot * (1 - cosine),
+        y: a.y * cosine + (axis.z * a.x - axis.x * a.z) * sine + axis.y * axisDot * (1 - cosine),
+        z: a.z * cosine + (axis.x * a.y - axis.y * a.x) * sine + axis.z * axisDot * (1 - cosine)
+      };
+    }
+    const dot = Math.max(-.9995, Math.min(.9995, rawDot));
+    const angle = Math.acos(dot);
+    const sine = Math.sin(angle);
+    if (Math.abs(sine) < .001) return normalizeVector({
+      x: a.x + (b.x - a.x) * progress,
+      y: a.y + (b.y - a.y) * progress,
+      z: a.z + (b.z - a.z) * progress
+    }, a);
+    const startWeight = Math.sin((1 - progress) * angle) / sine;
+    const endWeight = Math.sin(progress * angle) / sine;
+    return {
+      x: a.x * startWeight + b.x * endWeight,
+      y: a.y * startWeight + b.y * endWeight,
+      z: a.z * startWeight + b.z * endWeight
+    };
+  }
+  function rotatePoint(point, yaw, pitch, roll) {
+    const cosYaw = Math.cos(yaw), sinYaw = Math.sin(yaw);
+    const yawX = point.x * cosYaw - point.z * sinYaw;
+    const yawZ = point.x * sinYaw + point.z * cosYaw;
+    const cosPitch = Math.cos(pitch), sinPitch = Math.sin(pitch);
+    const pitchY = point.y * cosPitch - yawZ * sinPitch;
+    const pitchZ = point.y * sinPitch + yawZ * cosPitch;
+    const cosRoll = Math.cos(roll), sinRoll = Math.sin(roll);
+    return {
+      x: yawX * cosRoll - pitchY * sinRoll,
+      y: yawX * sinRoll + pitchY * cosRoll,
+      z: pitchZ
+    };
+  }
+  function cubicPoint(start, controlA, controlB, end, progress) {
+    const inverse = 1 - progress;
+    const a = inverse * inverse * inverse;
+    const b = 3 * inverse * inverse * progress;
+    const c = 3 * inverse * progress * progress;
+    const d = progress * progress * progress;
+    return {
+      x: start.x * a + controlA.x * b + controlB.x * c + end.x * d,
+      y: start.y * a + controlA.y * b + controlB.y * c + end.y * d,
+      z: start.z * a + controlA.z * b + controlB.z * c + end.z * d
+    };
+  }
+
+  function morphPoint(node, progress) {
+    const eased = smootherStep(progress);
+    const envelope = Math.sin(Math.PI * progress);
+    const start = { x: node.motionStartX, y: node.motionStartY, z: node.motionStartZ };
+    const target = { x: node.tx, y: node.ty, z: node.tz };
+    const startRadius = vectorLength(start);
+    const targetRadius = vectorLength(target);
+    let point;
+    if (startRadius > 12 && targetRadius > 12) {
+      // Directions travel over the surface of an imaginary sphere instead of
+      // cutting through it on a straight line. The radius contracts/expands
+      // separately, which makes the network feel like one turning solid.
+      const direction = slerpDirection(start, target, eased);
+      const radius = (startRadius + (targetRadius - startRadius) * eased) * (1 + envelope * .055);
+      point = { x: direction.x * radius, y: direction.y * radius, z: direction.z * radius };
+    } else {
+      // A focus node cannot be slerped to radius zero. Give it a curved cubic
+      // flight path so it visibly arcs into (or out of) the exact centre.
+      const outer = startRadius > targetRadius ? normalizeVector(start) : normalizeVector(target);
+      let tangent = normalizeVector(crossVector({ x: .18, y: 1, z: .36 }, outer), { x: 0, y: 0, z: 1 });
+      const curveDirection = graphMorph.direction * (node.exiting ? -1 : 1);
+      tangent = { x: tangent.x * curveDirection, y: tangent.y * curveDirection, z: tangent.z * curveDirection };
+      const curve = Math.min(116, 58 + Math.hypot(target.x - start.x, target.y - start.y, target.z - start.z) * .26);
+      const controlA = { x: start.x + tangent.x * curve, y: start.y + tangent.y * curve, z: start.z + tangent.z * curve + 34 };
+      const controlB = { x: target.x + tangent.x * curve * .48, y: target.y + tangent.y * curve * .48, z: target.z + tangent.z * curve * .48 + 18 };
+      point = cubicPoint(start, controlA, controlB, target, eased);
+    }
+    // One shared rotation axis is applied to every node. This is the rigid-body
+    // cue that turns the rearrangement into a sphere/polyhedron rotation.
+    return rotatePoint(
+      point,
+      graphMorph.yaw * envelope,
+      graphMorph.pitch * envelope,
+      graphMorph.roll * envelope
+    );
+  }
+
+  const polyhedron = (() => {
+    const phi = (1 + Math.sqrt(5)) / 2;
+    const raw = [
+      [0, -1, -phi], [0, -1, phi], [0, 1, -phi], [0, 1, phi],
+      [-1, -phi, 0], [-1, phi, 0], [1, -phi, 0], [1, phi, 0],
+      [-phi, 0, -1], [phi, 0, -1], [-phi, 0, 1], [phi, 0, 1]
+    ];
+    const vertices = raw.map(([x, y, z]) => normalizeVector({ x, y, z }));
+    const edges = [];
+    for (let i = 0; i < vertices.length; i++) {
+      for (let j = i + 1; j < vertices.length; j++) {
+        const distance = Math.hypot(vertices[i].x - vertices[j].x, vertices[i].y - vertices[j].y, vertices[i].z - vertices[j].z);
+        if (distance < 1.08) edges.push([i, j]);
+      }
+    }
+    return { vertices, edges };
+  })();
+
   function nudgeOrbit(id, amount = 1) {
-    const direction = hash(id + "orbit-direction") > .5 ? 1 : -1;
-    orbit.targetYaw += direction * (.2 + hash(id + "orbit-distance") * .16) * amount;
-    orbit.targetPitch = -.08 + (hash(id + "orbit-pitch") - .5) * .2 * amount;
+    const canonicalYaw = (hash(id + "orbit-direction") - .5) * .3;
+    const canonicalPitch = -.08 + (hash(id + "orbit-pitch") - .5) * .12;
+    const blend = amount >= .75 ? 1 : amount;
+    orbit.targetYaw += (canonicalYaw - orbit.targetYaw) * blend;
+    orbit.targetPitch += (canonicalPitch - orbit.targetPitch) * blend;
     if (reducedMotion) {
       orbit.yaw = orbit.targetYaw;
       orbit.pitch = orbit.targetPitch;
@@ -156,8 +300,50 @@
     const sliced = sliceGraph(focusId);
     focusId = sliced.focusId;
     const visible = sliced.visible;
+    const transitionStartedAt = performance.now();
+    const spinDirection = hash(focusId + "polyhedron-spin") > .5 ? 1 : -1;
+    const previousLinks = graphLinks;
+    const previousFocusId = nodes.find(node => !node.exiting && node.depth === 0)?.id;
+    const hasPreviousFocus = Boolean(previousFocusId && previousFocusId !== focusId);
+    graphMorph = {
+      startedAt: transitionStartedAt,
+      duration: reducedMotion || !hasPreviousFocus ? 0 : 1120,
+      direction: spinDirection,
+      yaw: spinDirection * (.52 + hash(focusId + "shared-yaw") * .16),
+      pitch: (hash(focusId + "shared-pitch") - .5) * .34,
+      roll: spinDirection * (.08 + hash(focusId + "shared-roll") * .07)
+    };
+    const linkKey = link => `${link.source}|${link.target}|${link.type}`;
+    const previousLinkKeys = new Set(previousLinks.map(linkKey));
+    const nextLinkKeys = new Set(sliced.links.map(linkKey));
     graphWords = visible;
-    graphLinks = sliced.links;
+    graphLinks = sliced.links.map(link => {
+      const retained = previousLinkKeys.has(linkKey(link));
+      const startOpacity = reducedMotion ? 1 : retained ? 1 : 0;
+      return {
+        ...link,
+        opacity: startOpacity,
+        motionStartOpacity: startOpacity,
+        motionTargetOpacity: 1,
+        motionStartedAt: transitionStartedAt,
+        motionDuration: reducedMotion || retained ? 0 : 820,
+        exiting: false
+      };
+    });
+    // Keep only the old centre spokes for a brief hand-off. This avoids a hard
+    // flash without drawing an entire second network.
+    fadingLinks = reducedMotion ? [] : previousLinks
+      .filter(link => !nextLinkKeys.has(linkKey(link)) && (link.source === previousFocusId || link.target === previousFocusId))
+      .slice(0, 12)
+      .map(link => ({
+        ...link,
+        opacity: link.opacity ?? 1,
+        motionStartOpacity: link.opacity ?? 1,
+        motionTargetOpacity: 0,
+        motionStartedAt: transitionStartedAt,
+        motionDuration: 650,
+        exiting: true
+      }));
     if (!focusId) return;
     selectedId = focusId;
     const links = graphLinks;
@@ -171,7 +357,8 @@
       }));
       frontier = next;
     }
-    const old = new Map(nodes.map(n => [n.id, n]));
+    const previousNodes = nodes.filter(node => !node.exiting);
+    const old = new Map(previousNodes.map(n => [n.id, n]));
     const focusLinks = links
       .filter(link => link.source === focusId || link.target === focusId)
       .sort((a, b) => b.strength - a.strength);
@@ -200,35 +387,73 @@
         const prev = old.get(word.id);
         const showLabel = depth === 0 || depth === 1 || smallScope;
         const relation = directLink.get(word.id);
-        const fontSize = depth === 0 ? 26 : depth === 1 ? 13 + strongest * 3.5 : 11;
+        const fontSize = GALAXY_WORD_FONT_SIZE;
+        const isFocus = word.id === focusId;
+        const entryAngle = hash(word.id + "focus-entry-angle") * Math.PI * 2;
+        const freshFocusX = Math.cos(entryAngle) * 86;
+        const freshFocusY = Math.sin(entryAngle) * 52;
+        const startX = isFocus ? (prev?.x ?? (hasPreviousLayout ? freshFocusX : 0)) : (prev?.x ?? tx * .82);
+        const startY = isFocus ? (prev?.y ?? (hasPreviousLayout ? freshFocusY : 0)) : (prev?.y ?? ty * .82);
+        const startZ = isFocus ? (prev?.z ?? (hasPreviousLayout ? 90 : 0)) : (prev?.z ?? tz + 34);
+        const motionDuration = reducedMotion || !hasPreviousLayout ? 0 : graphMorph.duration;
+        const startOpacity = prev?.opacity ?? (hasPreviousLayout ? 0 : 1);
         nextNodes.push({
           ...word, tx, ty,
-          x: prev?.x ?? (reducedMotion || !hasPreviousLayout ? tx : tx * .18),
-          y: prev?.y ?? (reducedMotion || !hasPreviousLayout ? ty : ty * .18),
-          z: prev?.z ?? (reducedMotion || !hasPreviousLayout ? tz : 210 + (hash(word.id + "arrival") - .5) * 45),
-          vx: prev?.vx ?? 0,
-          vy: prev?.vy ?? 0,
-          vz: prev?.vz ?? 0,
+          x: startX,
+          y: startY,
+          z: startZ,
+          vx: 0,
+          vy: 0,
+          vz: 0,
+          motionStartX: startX,
+          motionStartY: startY,
+          motionStartZ: startZ,
+          motionStartedAt: transitionStartedAt,
+          motionDuration,
           tz,
           anchorX: tx, anchorY: ty,
           rotation: showLabel && depth > 0 ? (hash(word.id + "r") - .5) * .032 : 0,
           fontSize,
           showLabel,
           accent: relation ? colors[relation.type] : colors.synonym,
-          depth
+          depth,
+          opacity: startOpacity,
+          motionStartOpacity: startOpacity,
+          motionTargetOpacity: 1,
+          exiting: false
         });
       });
     });
     relaxLabels(nextNodes);
-    nodes = nextNodes;
+    const nextIds = new Set(nextNodes.map(node => node.id));
+    const outgoingNodes = reducedMotion ? [] : previousNodes
+      .filter(node => !nextIds.has(node.id))
+      .sort((a, b) => Number(b.showLabel) - Number(a.showLabel) || a.depth - b.depth)
+      .slice(0, 8)
+      .map(node => ({
+        ...node,
+        tx: node.x * 1.08,
+        ty: node.y * 1.08,
+        tz: node.z + 62,
+        motionStartX: node.x,
+        motionStartY: node.y,
+        motionStartZ: node.z,
+        motionStartedAt: transitionStartedAt,
+        motionDuration: graphMorph.duration || 760,
+        motionStartOpacity: node.opacity ?? 1,
+        motionTargetOpacity: 0,
+        exiting: true
+      }));
+    nodes = [...outgoingNodes, ...nextNodes];
     updateStatus();
+    requestDraw();
   }
 
   function relaxLabels(layoutNodes) {
     const labeled = layoutNodes.filter(node => node.showLabel);
     const frameWidth = Math.max(320, width || stage.clientWidth || 1000);
     const frameHeight = Math.max(440, height || stage.clientHeight || 560);
-    for (let round = 0; round < 80; round++) {
+    for (let round = 0; round < 36; round++) {
       for (let i = 0; i < labeled.length; i++) {
         const a = labeled[i];
         for (let j = i + 1; j < labeled.length; j++) {
@@ -293,44 +518,113 @@
     };
   }
 
+  function drawMorphScaffold(now) {
+    if (!graphMorph.duration) return;
+    const progress = clamp01((now - graphMorph.startedAt) / graphMorph.duration);
+    if (progress <= 0 || progress >= 1) return;
+    const visibility = Math.pow(Math.sin(Math.PI * progress), 1.35);
+    const radius = Math.min(214, Math.max(142, Math.min(width, height) * .34));
+    const sharedSpin = graphMorph.direction * (-.5 + progress) * 1.08;
+    const points = polyhedron.vertices.map(vertex => {
+      const turned = rotatePoint(
+        { x: vertex.x * radius, y: vertex.y * radius, z: vertex.z * radius },
+        sharedSpin + graphMorph.yaw * Math.sin(Math.PI * progress),
+        graphMorph.pitch * .65 * Math.sin(Math.PI * progress),
+        graphMorph.roll * Math.sin(Math.PI * progress)
+      );
+      return screenPosition(turned);
+    });
+    ctx.save();
+    ctx.lineWidth = .62;
+    polyhedron.edges.forEach(([from, to], index) => {
+      const a = points[from], b = points[to];
+      const near = Math.max(.42, Math.min(1, 1 - (a.z + b.z) / 900));
+      ctx.globalAlpha = visibility * near * (index % 3 === 0 ? .105 : .065);
+      ctx.strokeStyle = index % 3 === 0 ? colors.etymology : colors.synonym;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    });
+    ctx.restore();
+  }
+
   function draw() {
+    animationFrame = null;
     ctx.clearRect(0, 0, width, height);
-    camera.x += (targetCamera.x - camera.x) * (reducedMotion ? 1 : .1);
-    camera.y += (targetCamera.y - camera.y) * (reducedMotion ? 1 : .1);
-    camera.scale += (targetCamera.scale - camera.scale) * (reducedMotion ? 1 : .1);
+    const now = performance.now();
+    camera.x += (targetCamera.x - camera.x) * (reducedMotion ? 1 : .14);
+    camera.y += (targetCamera.y - camera.y) * (reducedMotion ? 1 : .14);
+    camera.scale += (targetCamera.scale - camera.scale) * (reducedMotion ? 1 : .12);
+    if (Math.abs(targetCamera.x - camera.x) < .08) camera.x = targetCamera.x;
+    if (Math.abs(targetCamera.y - camera.y) < .08) camera.y = targetCamera.y;
+    if (Math.abs(targetCamera.scale - camera.scale) < .0005) camera.scale = targetCamera.scale;
+    focusPulse = 0;
     if (reducedMotion) {
       orbit.yaw = orbit.targetYaw; orbit.pitch = orbit.targetPitch;
     } else {
-      orbit.yawVelocity = (orbit.yawVelocity + (orbit.targetYaw - orbit.yaw) * .013) * .86;
-      orbit.pitchVelocity = (orbit.pitchVelocity + (orbit.targetPitch - orbit.pitch) * .016) * .84;
-      orbit.yaw += orbit.yawVelocity;
-      orbit.pitch += orbit.pitchVelocity;
+      orbit.yaw += (orbit.targetYaw - orbit.yaw) * .085;
+      orbit.pitch += (orbit.targetPitch - orbit.pitch) * .095;
+      if (Math.abs(orbit.targetYaw - orbit.yaw) < .0005) orbit.yaw = orbit.targetYaw;
+      if (Math.abs(orbit.targetPitch - orbit.pitch) < .0005) orbit.pitch = orbit.targetPitch;
+      orbit.yawVelocity = 0;
+      orbit.pitchVelocity = 0;
     }
     nodes.forEach(n => {
       if (reducedMotion) {
-        n.x = n.tx; n.y = n.ty; n.z = n.tz;
+        n.x = n.tx; n.y = n.ty; n.z = n.tz; n.opacity = n.motionTargetOpacity ?? 1;
+        n.motionProgress = 1;
         n.vx = 0; n.vy = 0; n.vz = 0;
         return;
       }
-      n.vx = (n.vx + (n.tx - n.x) * .014) * .84;
-      n.vy = (n.vy + (n.ty - n.y) * .014) * .84;
-      n.vz = (n.vz + (n.tz - n.z) * .012) * .85;
-      n.x += n.vx; n.y += n.vy; n.z += n.vz;
+      if (!n.motionDuration) {
+        n.x = n.tx; n.y = n.ty; n.z = n.tz; n.motionProgress = 1;
+      } else {
+        const progress = Math.max(0, Math.min(1, (now - n.motionStartedAt) / n.motionDuration));
+        n.motionProgress = progress;
+        const eased = smootherStep(progress);
+        const point = morphPoint(n, progress);
+        n.x = point.x; n.y = point.y; n.z = point.z;
+        n.opacity = n.motionStartOpacity + ((n.motionTargetOpacity ?? 1) - n.motionStartOpacity) * eased;
+        if (progress === 1) {
+          n.x = n.tx; n.y = n.ty; n.z = n.tz;
+          n.opacity = n.motionTargetOpacity ?? 1;
+          n.motionDuration = 0;
+        }
+      }
     });
+    nodes = nodes.filter(node => !node.exiting || node.opacity > .01);
+    const graphMorphing = nodes.some(node => node.motionDuration);
+
+    const updateLinkOpacity = link => {
+      if (!link.motionDuration) return;
+      const progress = Math.max(0, Math.min(1, (now - link.motionStartedAt) / link.motionDuration));
+      const eased = progress * progress * (3 - 2 * progress);
+      link.opacity = link.motionStartOpacity + (link.motionTargetOpacity - link.motionStartOpacity) * eased;
+      if (progress === 1) {
+        link.opacity = link.motionTargetOpacity;
+        link.motionDuration = 0;
+      }
+    };
+    graphLinks.forEach(updateLinkOpacity);
+    fadingLinks.forEach(updateLinkOpacity);
+    fadingLinks = fadingLinks.filter(link => link.opacity > .01);
+
+    drawMorphScaffold(now);
 
     const nodeById = new Map(nodes.map(n => [n.id, n]));
     const drawSettings = activeDensitySettings();
-    visibleRelations().forEach(rel => {
+    [...fadingLinks, ...visibleRelations()].forEach(rel => {
       const a = nodeById.get(rel.source), b = nodeById.get(rel.target);
       if (!a || !b) return;
       const p1 = screenPosition(a), p2 = screenPosition(b);
       const active = rel.source === selectedId || rel.target === selectedId;
       const hovered = rel.source === hoveredId || rel.target === hoveredId;
-      const context = drawSettings.contextEdges && a.depth <= 1 && b.depth <= 1;
+      const context = rel.exiting
+        || (graphMorphing && a.depth <= 1 && b.depth <= 1)
+        || (drawSettings.contextEdges && a.depth <= 1 && b.depth <= 1);
       if (!active && !hovered && !context) return;
       ctx.save();
       const depthAlpha = Math.max(.62, Math.min(1, (p1.scale + p2.scale) / 2));
-      ctx.globalAlpha = (active ? .58 : hovered ? .38 : .055) * depthAlpha;
+      const linkOpacity = Math.min(a.opacity ?? 1, b.opacity ?? 1);
+      ctx.globalAlpha = (rel.exiting ? .3 : active ? .58 : hovered ? .38 : graphMorphing ? .13 : .055) * depthAlpha * linkOpacity * (rel.opacity ?? 1);
       ctx.strokeStyle = colors[rel.type];
       ctx.lineWidth = (active ? .9 + rel.strength : .55) * Math.min(1.12, (p1.scale + p2.scale) / 2);
       if (rel.type === "antonym") ctx.setLineDash([5, 5]);
@@ -339,7 +633,8 @@
       const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
       const curve = (hash(rel.source + rel.target + rel.type) - .5) * 70;
       ctx.moveTo(p1.x, p1.y);
-      ctx.quadraticCurveTo(mx - (p2.y - p1.y) * curve / 300, my + (p2.x - p1.x) * curve / 300, p2.x, p2.y);
+      if (graphMorphing) ctx.lineTo(p2.x, p2.y);
+      else ctx.quadraticCurveTo(mx - (p2.y - p1.y) * curve / 300, my + (p2.x - p1.x) * curve / 300, p2.x, p2.y);
       ctx.stroke(); ctx.restore();
     });
 
@@ -348,49 +643,59 @@
     nodes.map(node => ({node, p: screenPosition(node)})).sort((a,b) => b.p.z-a.p.z).forEach(({node,p}) => {
       const selected = node.id === selectedId, hovered = node.id === hoveredId;
       const labelVisible = selected || hovered || node.showLabel;
+      const labelScale = camera.scale;
+      const motionOpacity = node.opacity ?? 1;
       const projectedTilt = selected ? 0 : node.rotation + Math.max(-.018, Math.min(.018, p.z / 7000));
       ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(projectedTilt);
       if (selected) {
-        const glowRadius = 58 * p.scale;
+        ctx.globalAlpha = motionOpacity;
+        const glowRadius = (58 + focusPulse * 24) * p.scale;
         const glow = ctx.createRadialGradient(0, 0, 3, 0, 0, glowRadius);
-        glow.addColorStop(0, "rgba(66,214,218,.26)"); glow.addColorStop(1, "rgba(66,214,218,0)");
+        glow.addColorStop(0, `rgba(66,214,218,${.26 + focusPulse * .16})`); glow.addColorStop(1, "rgba(66,214,218,0)");
         ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(0, 0, glowRadius, 0, Math.PI * 2); ctx.fill();
       }
       const dotY = labelVisible ? -(selected ? 25 : node.fontSize * .88) * p.scale : 0;
       const depthVisibility = Math.max(.48, Math.min(1, p.scale));
-      ctx.globalAlpha = (selected || hovered ? 1 : node.depth === 1 ? .82 : .38) * depthVisibility;
+      ctx.globalAlpha = (selected || hovered ? 1 : node.depth === 1 ? .82 : .38) * depthVisibility * motionOpacity;
       ctx.fillStyle = node.accent;
       ctx.shadowColor = node.accent; ctx.shadowBlur = selected ? 15 : hovered ? 10 : 5;
       ctx.beginPath(); ctx.arc(0, dotY, (selected ? 3.5 : node.depth === 1 ? 2.8 : 2.1) * p.scale, 0, Math.PI * 2); ctx.fill();
       const kind = catalogKind(node);
       ctx.shadowBlur = 0;
-      ctx.globalAlpha = selected || hovered ? .9 : .55;
+      ctx.globalAlpha = (selected || hovered ? .9 : .55) * motionOpacity;
       ctx.strokeStyle = kind === "overlap" ? colors.prefix : kind === "gre" ? colors.etymology : colors.synonym;
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.arc(0, dotY, (selected ? 6.2 : node.depth === 1 ? 5.1 : 4.1) * p.scale, 0, Math.PI * 2); ctx.stroke();
       if (labelVisible) {
-        ctx.globalAlpha = (selected || hovered ? 1 : .9) * Math.max(.72, depthVisibility);
+        ctx.globalAlpha = (selected || hovered ? 1 : .9) * Math.max(.72, depthVisibility) * motionOpacity;
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        ctx.font = `500 ${node.fontSize * p.scale}px ${selected ? '"Fraunces", Georgia, serif' : '"Manrope", sans-serif'}`;
+        ctx.font = `500 ${node.fontSize * labelScale}px ${selected ? '"Fraunces", Georgia, serif' : '"Manrope", sans-serif'}`;
         ctx.fillStyle = selected ? colors.synonym : hovered ? textColor : node.depth === 1 ? textColor : mutedColor;
         ctx.shadowColor = selected ? colors.synonym : "rgba(7,16,29,.9)"; ctx.shadowBlur = selected ? 15 : 5;
         ctx.fillText(node.id, 0, 0);
         if (selected) {
-          ctx.shadowBlur = 0; ctx.font = `500 ${9 * p.scale}px "Manrope", sans-serif`; ctx.fillStyle = mutedColor;
-          ctx.fillText("SELECTED", 0, 24 * p.scale);
+          ctx.shadowBlur = 0; ctx.font = `500 ${9 * labelScale}px "Manrope", sans-serif`; ctx.fillStyle = mutedColor;
+          ctx.fillText("SELECTED", 0, 24 * labelScale);
         }
       }
       ctx.restore();
     });
-    animationFrame = requestAnimationFrame(draw);
+    const cameraMoving = Math.abs(targetCamera.x - camera.x) >= .08
+      || Math.abs(targetCamera.y - camera.y) >= .08
+      || Math.abs(targetCamera.scale - camera.scale) >= .0005;
+    const orbitMoving = Math.abs(orbit.targetYaw - orbit.yaw) >= .0005
+      || Math.abs(orbit.targetPitch - orbit.pitch) >= .0005;
+    const nodesMoving = nodes.some(node => node.motionDuration);
+    const linksMoving = graphLinks.some(link => link.motionDuration) || fadingLinks.some(link => link.motionDuration);
+    if (dragging || cameraMoving || orbitMoving || nodesMoving || linksMoving) requestDraw();
   }
 
   function updateStatus() {
     const total = universeWords().length;
     const satTotal = words.filter(word => word.exams.includes("SAT")).length;
     const greTotal = words.filter(word => word.exams.includes("GRE")).length;
-    const directWords = nodes.filter(node => node.depth === 1).length;
-    const contextDots = nodes.filter(node => node.depth > 1 && !node.showLabel).length;
+    const directWords = nodes.filter(node => !node.exiting && node.depth === 1).length;
+    const contextDots = nodes.filter(node => !node.exiting && node.depth > 1 && !node.showLabel).length;
     status.textContent = `第一圈 ${directWords} 词（全部显示） · 第二圈 ${contextDots} 个关系星点 · 当前 ${total} · SAT ${satTotal} · GRE ${greTotal}`;
   }
 
@@ -420,6 +725,11 @@
   function renderDetail() {
     const word = wordMap.get(selectedId);
     if (!word) { detail.innerHTML = ""; return; }
+    const senses = window.getLexicalSenses ? window.getLexicalSenses(word) : [{ pos: word.pos, definition: word.definition, zh: word.zh }];
+    const posLabel = window.getLexicalPosLabel ? window.getLexicalPosLabel(word) : word.pos;
+    const senseMarkup = senses.map((sense, index) => `<article class="lexical-sense ${senses.length > 1 ? "is-polysemous" : ""}">
+      <span>${sense.pos}</span><div>${sense.definition ? `<p>${sense.definition}</p>` : ""}${sense.zh ? `<strong>${sense.zh}</strong>` : ""}</div>
+    </article>`).join("");
     const kind = catalogKind(word);
     const catalogText = kind === "overlap"
       ? `SAT + GRE · ${word.group} · ${word.greTier || "GRE Core"}`
@@ -430,7 +740,8 @@
       ? items.map(relation => {
           const relatedId = relation.source === word.id ? relation.target : relation.source;
           const relatedWord = wordMap.get(relatedId);
-          return `<button class="related-word" type="button" data-related-word="${relatedId}">${relatedId}<small>${relatedWord?.pos || "词性未知"} · ${Math.round(relation.strength * 100)}%</small></button>`;
+          const relatedPos = relatedWord && window.getLexicalPosLabel ? window.getLexicalPosLabel(relatedWord) : (relatedWord?.pos || "词性未知");
+          return `<button class="related-word" type="button" data-related-word="${relatedId}">${relatedId}<small>${relatedPos} · ${Math.round(relation.strength * 100)}%</small></button>`;
         }).join("")
       : `<span class="relation-empty">${emptyText}</span>`;
     const etymology = window.getLexicalEtymology ? window.getLexicalEtymology(word) : (word.etymology || "暂未找到可靠词源记录。");
@@ -451,7 +762,7 @@
       : `<div class="family-word root-anchor"><strong>${word.id} 的祖源</strong><span>${etymology}</span></div>`;
     detail.innerHTML = `
       <div class="detail-intro">
-        <span class="word-type">词性 · ${word.pos}</span><span class="word-catalog ${kind}">${catalogText}</span><span class="word-pass-count">累计 ${passCount} 遍</span>
+        <span class="word-type">词性 · ${posLabel}</span><span class="word-catalog ${kind}">${catalogText}</span><span class="word-pass-count">累计 ${passCount} 遍</span>
         <div class="detail-word">${word.id}</div>
         <p class="phonetic">${word.phonetic}</p>
         <div class="familiarity"><span>我的熟悉度</span><div class="familiarity-options" role="group" aria-label="熟悉度 1 到 5">
@@ -459,9 +770,8 @@
         </div></div>
       </div>
       <div class="detail-meaning">
-        <span class="detail-label">Meaning & usage</span>
-        <p class="english-definition">${word.definition}</p>
-        <p class="chinese-meaning">${word.zh}</p>
+        <span class="detail-label">Parts of speech & meanings · 词性与对应意思</span>
+        <div class="lexical-senses">${senseMarkup}</div>
         <span class="detail-label">Example</span><p class="example">“${word.example}”</p>
         <span class="detail-label">Collocations</span><div class="collocations">${(word.collocations || []).map(c => `<span>${c}</span>`).join("")}</div>
         <div class="detail-relations">
@@ -479,7 +789,10 @@
     document.fonts?.ready.then(fitDetailWord);
     detail.querySelectorAll("[data-level]").forEach(btn => btn.addEventListener("click", () => {
       word.level = Number(btn.dataset.level);
-      localStorage.setItem("lexiverse-levels", JSON.stringify(Object.fromEntries(words.map(w => [w.id, w.level]))));
+      let savedLevels = {};
+      try { savedLevels = JSON.parse(localStorage.getItem("lexiverse-levels")) || {}; } catch {}
+      savedLevels[word.id] = word.level;
+      localStorage.setItem("lexiverse-levels", JSON.stringify(savedLevels));
       window.dispatchEvent(new CustomEvent("lexiverse-level-change", { detail: { id: word.id, level: word.level, source: "app" } }));
       renderDetail(); buildLayout();
     }));
@@ -491,9 +804,13 @@
     if (!wordMap.has(id)) return;
     if (scopedIds && !scopedIds.has(id)) scopedIds = null;
     if (!matchesCatalog(wordMap.get(id))) { catalog = "all"; updateCatalogButtons(); }
-    selectedId = id; buildLayout(id); renderDetail();
-    if (animate) nudgeOrbit(id);
-    targetCamera = { x: 0, y: 0, scale: animate ? 1.06 : 1 };
+    selectedId = id;
+    targetCamera = { x: 0, y: 0, scale: 1 };
+    buildLayout(id);
+    const renderToken = ++detailRenderToken;
+    requestAnimationFrame(() => {
+      if (renderToken === detailRenderToken && selectedId === id) renderDetail();
+    });
     document.getElementById("word-search").value = "";
     document.getElementById("search-results").hidden = true;
   }
@@ -504,43 +821,46 @@
 
   function nodeAt(clientX, clientY) {
     const rect = canvas.getBoundingClientRect(); const x = clientX - rect.left, y = clientY - rect.top;
-    return nodes.slice().sort((a,b) => a.depth-b.depth).find(n => {
-      const p = screenPosition(n); const radius = n.showLabel ? Math.max(18, n.id.length * n.fontSize * p.scale * .29) : 11 * p.scale;
+    return nodes.filter(n => !n.exiting && (n.opacity ?? 1) > .35).slice().sort((a,b) => a.depth-b.depth).find(n => {
+      const p = screenPosition(n); const radius = n.showLabel ? Math.max(18, n.id.length * n.fontSize * camera.scale * .29) : 11 * p.scale;
       return Math.hypot(x-p.x, y-p.y) < radius;
     });
   }
 
   canvas.addEventListener("pointerdown", e => { dragging = true; moved = false; lastPointer = {x:e.clientX,y:e.clientY}; canvas.setPointerCapture(e.pointerId); });
   canvas.addEventListener("pointermove", e => {
-    hoveredId = nodeAt(e.clientX, e.clientY)?.id || null; canvas.style.cursor = hoveredId ? "pointer" : (dragging ? "grabbing" : "grab");
+    const nextHoveredId = nodeAt(e.clientX, e.clientY)?.id || null;
+    if (nextHoveredId !== hoveredId) { hoveredId = nextHoveredId; requestDraw(); }
+    canvas.style.cursor = hoveredId ? "pointer" : (dragging ? "grabbing" : "grab");
     if (!dragging) return; const dx=e.clientX-lastPointer.x, dy=e.clientY-lastPointer.y; if(Math.abs(dx)+Math.abs(dy)>2)moved=true;
     targetCamera.x += dx/targetCamera.scale; targetCamera.y += dy/targetCamera.scale; camera.x = targetCamera.x; camera.y = targetCamera.y;
     orbit.targetYaw += dx * .0011; orbit.targetPitch = Math.max(-.24, Math.min(.12, orbit.targetPitch - dy * .0007));
-    lastPointer={x:e.clientX,y:e.clientY};
+    lastPointer={x:e.clientX,y:e.clientY}; requestDraw();
   });
   canvas.addEventListener("pointerup", e => { if (!moved) { const hit=nodeAt(e.clientX,e.clientY); if(hit)selectWord(hit.id); } dragging=false; });
-  canvas.addEventListener("pointerleave", () => { hoveredId=null; dragging=false; });
-  canvas.addEventListener("wheel", e => { e.preventDefault(); targetCamera.scale = Math.max(.55, Math.min(1.7, targetCamera.scale * (e.deltaY > 0 ? .91 : 1.1))); }, {passive:false});
+  canvas.addEventListener("pointerleave", () => { hoveredId=null; dragging=false; requestDraw(); });
+  canvas.addEventListener("wheel", e => { e.preventDefault(); targetCamera.scale = Math.max(.55, Math.min(1.7, targetCamera.scale * (e.deltaY > 0 ? .91 : 1.1))); requestDraw(); }, {passive:false});
 
   document.querySelectorAll(".relation-chip input").forEach(input => input.addEventListener("change", () => {
-    enabledTypes = new Set([...document.querySelectorAll(".relation-chip input:checked")].map(el => el.value)); buildLayout(); renderDetail(); nudgeOrbit(selectedId,.28);
+    enabledTypes = new Set([...document.querySelectorAll(".relation-chip input:checked")].map(el => el.value)); buildLayout(); renderDetail();
   }));
   document.querySelectorAll("[data-density]").forEach(button => button.addEventListener("click", () => {
     density = button.dataset.density;
     document.querySelectorAll("[data-density]").forEach(option => option.setAttribute("aria-pressed", String(option === button)));
-    buildLayout(); renderDetail(); targetCamera = {x:0,y:0,scale:1}; nudgeOrbit(selectedId,.32);
+    buildLayout(); renderDetail(); targetCamera = {x:0,y:0,scale:1}; requestDraw();
   }));
   document.querySelectorAll("[data-catalog]").forEach(button => button.addEventListener("click", () => {
     catalog = button.dataset.catalog;
     updateCatalogButtons();
-    buildLayout(); renderDetail(); targetCamera = {x:0,y:0,scale:1}; nudgeOrbit(selectedId,.32);
+    buildLayout(); renderDetail(); targetCamera = {x:0,y:0,scale:1}; requestDraw();
   }));
   document.getElementById("center-view").addEventListener("click", () => {
     targetCamera={x:0,y:0,scale:1};
     orbit.targetYaw=0; orbit.targetPitch=-.08;
+    requestDraw();
   });
-  document.getElementById("zoom-in").addEventListener("click", () => targetCamera.scale=Math.min(1.7,targetCamera.scale*1.18));
-  document.getElementById("zoom-out").addEventListener("click", () => targetCamera.scale=Math.max(.55,targetCamera.scale/1.18));
+  document.getElementById("zoom-in").addEventListener("click", () => { targetCamera.scale=Math.min(1.7,targetCamera.scale*1.18); requestDraw(); });
+  document.getElementById("zoom-out").addEventListener("click", () => { targetCamera.scale=Math.max(.55,targetCamera.scale/1.18); requestDraw(); });
   document.getElementById("random-word").addEventListener("click", () => { const pool=universeWords(); selectWord(pool[Math.floor(Math.random()*pool.length)].id); });
 
   const search = document.getElementById("word-search"), results = document.getElementById("search-results");
@@ -555,7 +875,8 @@
     results.innerHTML = found.length ? found.map(w => {
       const kind = catalogKind(w);
       const label = kind === "overlap" ? "SAT + GRE" : kind.toUpperCase();
-      return `<button type="button" class="search-result" role="option" data-word="${w.id}"><span>${w.id}</span><small>${label} · ${w.pos} · ${w.zh}</small></button>`;
+      const posLabel = window.getLexicalPosLabel ? window.getLexicalPosLabel(w) : w.pos;
+      return `<button type="button" class="search-result" role="option" data-word="${w.id}"><span>${w.id}</span><small>${label} · ${posLabel} · ${w.zh}</small></button>`;
     }).join("") : `<div class="search-result"><small>没有找到匹配单词</small></div>`;
     results.hidden=false; results.querySelectorAll("[data-word]").forEach(btn => btn.addEventListener("click", () => selectWord(btn.dataset.word)));
   }
@@ -597,7 +918,7 @@
   document.getElementById("clear-scope").addEventListener("click", () => { scopedIds=null; groupFilter.value=""; document.getElementById("scope-input").value=""; document.getElementById("scope-feedback").textContent="已恢复完整词库。"; buildLayout(); });
 
   const savedTheme=localStorage.getItem("lexiverse-theme"); if(savedTheme)document.documentElement.dataset.theme=savedTheme;
-  document.getElementById("theme-toggle").addEventListener("click", () => { const next=document.documentElement.dataset.theme==="light"?"dark":"light"; document.documentElement.dataset.theme=next; localStorage.setItem("lexiverse-theme",next); });
+  document.getElementById("theme-toggle").addEventListener("click", () => { const next=document.documentElement.dataset.theme==="light"?"dark":"light"; document.documentElement.dataset.theme=next; localStorage.setItem("lexiverse-theme",next); requestDraw(); });
   try { const levels=JSON.parse(localStorage.getItem("lexiverse-levels")); if(levels)words.forEach(w => {if(levels[w.id])w.level=levels[w.id]}); } catch {}
   window.addEventListener("lexiverse-level-change", event => {
     if (!event.detail?.id || event.detail.source === "app") return;

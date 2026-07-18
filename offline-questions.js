@@ -31,7 +31,7 @@ window.OFFLINE_SAT_QUESTIONS = [
     id: "craft-humanities-03", title: "Making a Manuscript Legible", genre: "humanities", difficulty: "hard",
     domain: "Craft and Structure", skill: "Text Structure and Purpose",
     targets: ["esoteric", "delineate", "polemical", "lucid"],
-    passage: "In her study of a fifteenth-century medical manuscript, historian Ana Ribeiro first delineates the text's system of abbreviations, many of which would be esoteric even to specialists in medieval Latin. She then translates two recipes into lucid modern prose before turning to the manuscript's polemical marginal notes, where an unknown reader challenges the author's claims. This sequence allows Ribeiro to establish how the document communicates before asking why one historical reader resisted what it communicated.",
+    passage: "In her study of a fifteenth-century medical manuscript, historian Ana Ribeiro first uses a diagram to delineate the text's system of abbreviations, many of which would be esoteric even to specialists in medieval Latin. She then translates two recipes into lucid modern prose before turning to the manuscript's polemical marginal notes, where an unknown reader challenges the author's claims. This sequence allows Ribeiro to establish how the document communicates before asking why one historical reader resisted what it communicated.",
     question: "Which choice best describes the function of the discussion of abbreviations and translations in the text as a whole?",
     choices: [
       "It supplies interpretive groundwork for the later analysis of a reader's objections.",

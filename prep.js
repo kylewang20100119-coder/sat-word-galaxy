@@ -297,15 +297,35 @@
   let reviewSeen = new Set();
   let reviewSessionCount = 0;
   let reviewSessionPromoted = 0;
+  let reviewSessionCorrect = 0;
   let lastReviewReadingId = "";
   let reviewReadingAttempts = [];
+  let contextReview = { attempts: 0, correct: 0, strong: 0, streak: 0, bestStreak: 0, history: [] };
+  let introducedIds = new Set();
   try { reviewReadingAttempts = JSON.parse(localStorage.getItem("lexiverse-review-reading-attempts-v1")) || []; } catch {}
+  try { contextReview = { ...contextReview, ...(JSON.parse(localStorage.getItem("lexiverse-context-review-v1")) || {}) }; } catch {}
   if (!Array.isArray(reviewReadingAttempts)) reviewReadingAttempts = [];
-  const intervals = { 1: 1, 2: 2, 3: 5, 4: 12, 5: 30 };
+  if (!Array.isArray(contextReview.history)) contextReview.history = [];
+  ["attempts", "correct", "strong", "streak", "bestStreak"].forEach(key => { contextReview[key] = Math.max(0, Number(contextReview[key]) || 0); });
+  const intervals = { 1: 0.5, 2: 1.5, 3: 4, 4: 10, 5: 24 };
+  const REVIEW_SESSION_LIMIT = 20;
+
+  function refreshIntroducedIds() {
+    const next = new Set(Object.keys(reviewStore));
+    Object.entries(levelStore).forEach(([id, level]) => { if (Number(level) > 1) next.add(id); });
+    try {
+      const groupState = JSON.parse(localStorage.getItem("lexiverse-group-study-v1")) || {};
+      Object.keys(groupState.completed || {}).forEach(id => next.add(id));
+      (Array.isArray(groupState.studyHistory) ? groupState.studyHistory : []).forEach(row => row?.id && next.add(row.id));
+      [1, 2, 3].forEach(pass => Object.keys(groupState.passProgress?.[pass] || groupState.passProgress?.[String(pass)] || {}).forEach(id => next.add(id)));
+    } catch {}
+    introducedIds = next;
+  }
 
   function isDue(word) {
     const state = reviewStore[word.id];
-    return !state || Number(state.nextReview || 0) <= Date.now();
+    if (state) return Number(state.nextReview || 0) <= Date.now();
+    return introducedIds.has(word.id) && Number(word.level || 1) < 5;
   }
 
   function todayStudiedIds() {
@@ -329,34 +349,174 @@
     localStorage.setItem("lexiverse-levels", JSON.stringify(levelStore));
   }
 
-  function updateWordLevel(word, remembered) {
+  function persistContextReview() {
+    if (contextReview.history.length > 2400) contextReview.history = contextReview.history.slice(-2400);
+    localStorage.setItem("lexiverse-context-review-v1", JSON.stringify(contextReview));
+  }
+
+  function contextHash(value) {
+    let result = 2166136261;
+    for (let index = 0; index < String(value).length; index += 1) result = Math.imul(result ^ String(value).charCodeAt(index), 16777619);
+    return result >>> 0;
+  }
+
+  function memoryState(word, now = Date.now()) {
+    const record = reviewStore[word.id] || {};
+    const stabilityDays = Math.max(0.15, Number(record.stabilityDays) || intervals[Number(word.level) || 1] || 0.5);
+    const elapsedDays = record.lastReviewed ? Math.max(0, (now - Number(record.lastReviewed)) / 86400000) : stabilityDays * 1.15;
+    const retrievability = Math.max(0.02, Math.min(1, Math.exp(-elapsedDays / stabilityDays)));
+    return { record, stabilityDays, elapsedDays, retrievability, strength: Math.round(retrievability * 100) };
+  }
+
+  function formatMemoryInterval(days) {
+    if (days < 1 / 1440) return "刚刚";
+    if (days < 1 / 24) return `${Math.max(10, Math.round(days * 1440))} 分钟`;
+    if (days < 1) return `${Math.max(1, Math.round(days * 24))} 小时`;
+    return `${Math.max(1, Math.round(days))} 天`;
+  }
+
+  function contextMeaning(word) {
+    const zh = String(word.zh || "").split("；").slice(0, 2).join("；");
+    return `${zh}${zh && word.definition ? " · " : ""}${word.definition || ""}`.trim();
+  }
+
+  function sceneLens(word) {
+    const pos = String(word.pos || "").toLowerCase();
+    if (pos.includes("verb")) return "Picture the actor, the action, and what changes because of it. Notice whether the action causes, prevents, intensifies, or weakens something.";
+    if (pos.includes("adjective")) return "Picture the person or thing being evaluated. Notice the attitude, degree, or quality this word adds to the description.";
+    if (pos.includes("adverb")) return "Notice how the word changes the manner, certainty, frequency, or intensity of the action around it.";
+    if (pos.includes("noun")) return "Identify what kind of person, object, event, or abstract idea the word names, and what relationship it has to the rest of the sentence.";
+    return "Picture who is speaking, what is happening, and what attitude, intensity, or relationship this expression adds to the scene.";
+  }
+
+  function contextualMeaningOptions(word) {
+    const reviewCount = Number(reviewStore[word.id]?.reviewCount) || 0;
+    const eligible = satWords
+      .filter(candidate => candidate.id !== word.id && contextMeaning(candidate) !== contextMeaning(word))
+      .sort((a, b) => contextHash(`${word.id}|${reviewCount}|${a.id}`) - contextHash(`${word.id}|${reviewCount}|${b.id}`));
+    const samePos = eligible.filter(candidate => candidate.pos === word.pos);
+    const source = [...samePos, ...eligible.filter(candidate => !samePos.includes(candidate))].slice(0, 3);
+    const rows = [{ word, correct: true }, ...source.map(candidate => ({ word: candidate, correct: false }))];
+    rows.sort((a, b) => contextHash(`${word.id}|choice|${reviewCount}|${a.word.id}`) - contextHash(`${word.id}|choice|${reviewCount}|${b.word.id}`));
+    return rows;
+  }
+
+  function completeContextReview(word, quality, meaningCorrect) {
     const now = Date.now();
-    const previous = reviewStore[word.id] || { streak: 0 };
     const oldLevel = Number(word.level) || 1;
-    word.level = remembered ? Math.min(5, oldLevel + 1) : Math.max(1, oldLevel - 1);
+    const memory = memoryState(word, now);
+    const previous = memory.record;
+    const normalizedQuality = Math.max(0, Math.min(2, Number(quality) || 0));
+    let nextIntervalDays;
+    let stabilityDays;
+    if (normalizedQuality === 0) {
+      stabilityDays = Math.max(0.15, memory.stabilityDays * 0.42);
+      nextIntervalDays = 10 / 1440;
+      word.level = Math.max(1, oldLevel - 1);
+    } else if (normalizedQuality === 1) {
+      stabilityDays = Math.max(0.5, memory.stabilityDays * 0.88);
+      nextIntervalDays = Math.max(0.25, stabilityDays * 0.55);
+      word.level = oldLevel;
+    } else {
+      stabilityDays = Math.min(120, Math.max(memory.stabilityDays + 0.75, memory.stabilityDays * (1.55 + (1 - memory.retrievability) * 0.85)));
+      nextIntervalDays = stabilityDays;
+      word.level = Math.min(5, oldLevel + 1);
+    }
+    const difficulty = Math.max(0.15, Math.min(0.95, (Number(previous.difficulty) || 0.5) + (normalizedQuality === 0 ? 0.08 : normalizedQuality === 2 ? -0.035 : 0.015)));
     levelStore[word.id] = word.level;
-    reviewStore[word.id] = remembered
-      ? { streak: Number(previous.streak || 0) + 1, lastReviewed: now, nextReview: now + intervals[word.level] * 86400000 }
-      : { streak: 0, lastReviewed: now, nextReview: now + 10 * 60000 };
+    introducedIds.add(word.id);
+    reviewStore[word.id] = {
+      ...previous,
+      streak: normalizedQuality === 2 ? Number(previous.streak || 0) + 1 : normalizedQuality === 0 ? 0 : Number(previous.streak || 0),
+      lastReviewed: now,
+      nextReview: now + nextIntervalDays * 86400000,
+      stabilityDays,
+      difficulty,
+      reviewCount: Number(previous.reviewCount || 0) + 1,
+      contextHits: Number(previous.contextHits || 0) + Number(normalizedQuality === 2),
+      lapses: Number(previous.lapses || 0) + Number(normalizedQuality === 0),
+      lastQuality: normalizedQuality
+    };
+    contextReview.attempts += 1;
+    if (meaningCorrect) contextReview.correct += 1;
+    if (normalizedQuality === 2) {
+      contextReview.strong += 1;
+      contextReview.streak += 1;
+      contextReview.bestStreak = Math.max(contextReview.bestStreak, contextReview.streak);
+    } else contextReview.streak = 0;
+    contextReview.history.push({ id: word.id, quality: normalizedQuality, meaningCorrect: Boolean(meaningCorrect), stabilityDays, nextReview: reviewStore[word.id].nextReview, at: now });
     reviewSeen.add(word.id);
     reviewSessionCount += 1;
-    window.LexiversePasses?.increment(word.id, "review-card");
-    if (remembered && word.level > oldLevel) reviewSessionPromoted += 1;
+    if (meaningCorrect) reviewSessionCorrect += 1;
+    if (word.level > oldLevel) reviewSessionPromoted += 1;
+    window.LexiversePasses?.increment(word.id, "context-review");
     persistReview();
+    persistContextReview();
     window.dispatchEvent(new CustomEvent("lexiverse-level-change", { detail: { id: word.id, level: word.level, source: "prep" } }));
-    reviewFeedback.textContent = remembered
-      ? word.level > oldLevel
-        ? `✓ ${word.id}：熟悉度 ${oldLevel} → ${word.level}，已自动进入下一级。`
-        : `✓ ${word.id} 已稳定在最高熟悉度 5。`
-      : word.level < oldLevel
-        ? `${word.id}：熟悉度 ${oldLevel} → ${word.level}，稍后会更快再次出现。`
-        : `${word.id} 暂时保留在熟悉度 1，10 分钟后再次到期。`;
+    window.dispatchEvent(new CustomEvent("lexiverse-context-review", { detail: { id: word.id, quality: normalizedQuality, stabilityDays, streak: contextReview.streak } }));
+    reviewFeedback.textContent = normalizedQuality === 2
+      ? `✓ ${word.id} 的词义与使用场景都已取回；预计 ${formatMemoryInterval(nextIntervalDays)} 后再见。`
+      : normalizedQuality === 1
+        ? `${word.id} 的意思认得，但场景连接仍偏弱；约 ${formatMemoryInterval(nextIntervalDays)} 后再次激活。`
+        : `${word.id} 的语境记忆已断开；10 分钟后优先重现，不要求现在死记。`;
     renderReview();
     updatePoolStatus();
     renderAdaptiveReading();
   }
 
+  function renderContextReviewCard(word) {
+    const memory = memoryState(word);
+    const options = contextualMeaningOptions(word);
+    const collocations = Array.isArray(word.collocations) ? word.collocations.filter(Boolean).slice(0, 3) : [];
+    const card = document.createElement("article");
+    card.className = "review-card review-focus-card context-review-card";
+    card.innerHTML = `
+      <div class="context-review-top"><span><i></i> CONTEXT REACTIVATION</span><div><strong>${memory.strength}%</strong><small>当前预计记忆强度</small></div></div>
+      <div class="context-memory-meter" style="--memory-strength:${memory.strength}%"><i><b></b></i><span>稳定期约 ${formatMemoryInterval(memory.stabilityDays)} · 已过去 ${formatMemoryInterval(memory.elapsedDays)}</span></div>
+      <div class="context-scene-heading"><small>${escapeHtml(word.group)} · ${escapeHtml(window.getLexicalPosLabel ? window.getLexicalPosLabel(word) : (word.pos || "word"))} · L${word.level}</small><h3>${escapeHtml(word.id)}</h3><p>${escapeHtml(sceneLens(word))}</p></div>
+      <blockquote class="context-scene-sentence"></blockquote>
+      <section class="context-meaning-test"><span>MEANING IN THIS SCENE</span><strong>Which meaning best preserves what the word is doing here?</strong><div class="context-meaning-options">${options.map((option, index) => `<button type="button" data-context-meaning="${index}"><kbd>${String.fromCharCode(65 + index)}</kbd><span>${escapeHtml(contextMeaning(option.word))}</span></button>`).join("")}</div></section>
+      <section class="context-scene-anchor" hidden>
+        <div><span>SCENE ANCHOR</span><strong>${escapeHtml(word.id)}</strong><p>${escapeHtml(contextMeaning(word))}</p></div>
+        <blockquote>${escapeHtml(word.example || word.definition || "")}</blockquote>
+        ${collocations.length ? `<p class="context-transfer-cue"><b>Transfer cues</b>${collocations.map(item => `<span>${escapeHtml(item)}</span>`).join("")}</p>` : ""}
+        <p class="context-memory-hook"><b>Memory hook</b>${escapeHtml(word.memory || word.etymology || `Reconnect ${word.id} with the scene above.`)}</p>
+        <small>Now close your eyes for two seconds and replay the sentence as a scene. Could you recognize the same force in a different SAT passage?</small>
+      </section>
+      <div class="context-review-decision" hidden>
+        <button type="button" data-context-quality="1">意思认得，但画面还弱<small>较短间隔后再出现</small></button>
+        <button type="button" data-context-quality="2">词义和使用场景都能还原<small>延长稳定期</small></button>
+      </div>
+      <button type="button" class="context-reconnect-button" data-context-quality="0" hidden>这次没取回 · 带着场景重新连接</button>`;
+    appendHighlightedPassage(card.querySelector(".context-scene-sentence"), word.example || word.definition || "", [word]);
+    const anchor = card.querySelector(".context-scene-anchor");
+    const decision = card.querySelector(".context-review-decision");
+    const reconnect = card.querySelector(".context-reconnect-button");
+    let answered = false;
+    let meaningCorrect = false;
+    card.querySelectorAll("[data-context-meaning]").forEach(button => button.addEventListener("click", () => {
+      if (answered) return;
+      answered = true;
+      const selected = options[Number(button.dataset.contextMeaning)];
+      meaningCorrect = Boolean(selected?.correct);
+      card.querySelectorAll("[data-context-meaning]").forEach((choice, index) => {
+        choice.disabled = true;
+        if (options[index]?.correct) choice.classList.add("correct");
+      });
+      if (!meaningCorrect) button.classList.add("incorrect");
+      anchor.hidden = false;
+      decision.hidden = !meaningCorrect;
+      reconnect.hidden = meaningCorrect;
+      anchor.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }));
+    card.querySelectorAll("[data-context-quality]").forEach(button => button.addEventListener("click", () => {
+      completeContextReview(word, Number(button.dataset.contextQuality), meaningCorrect);
+    }));
+    reviewQueue.append(card);
+  }
+
   function renderLevelFilters() {
+    refreshIntroducedIds();
     const counts = Object.fromEntries([1, 2, 3, 4, 5].map(level => [level, satWords.filter(word => word.level === level).length]));
     const dueCount = satWords.filter(isDue).length;
     const todayCount = todayReviewWords().length;
@@ -369,6 +529,7 @@
       reviewSeen = new Set();
       reviewSessionCount = 0;
       reviewSessionPromoted = 0;
+      reviewSessionCorrect = 0;
       reviewFeedback.textContent = reviewFilter === "due"
         ? "已切换到到期队列，优先从熟悉度最低的词开始。"
         : reviewFilter === "today"
@@ -386,11 +547,14 @@
         : satWords.filter(word => word.level === Number(reviewFilter));
     return filtered
       .filter(word => !reviewSeen.has(word.id))
-      .sort((a, b) => a.level - b.level || Number(reviewStore[a.id]?.nextReview || 0) - Number(reviewStore[b.id]?.nextReview || 0) || a.id.localeCompare(b.id, "en"));
+      .sort((a, b) => memoryState(a).retrievability - memoryState(b).retrievability || Number(reviewStore[a.id]?.nextReview || 0) - Number(reviewStore[b.id]?.nextReview || 0) || a.level - b.level || a.id.localeCompare(b.id, "en"))
+      .slice(0, Math.max(0, REVIEW_SESSION_LIMIT - reviewSeen.size));
   }
 
   function renderReview() {
     renderLevelFilters();
+    const sessionHint = document.querySelector(".review-session-status span");
+    if (sessionHint) sessionHint.textContent = "先读场景，再判断词义；最后确认能否还原它的语气和作用";
     const candidates = reviewCandidates();
     const totalInFilter = reviewFilter === "due"
       ? satWords.filter(isDue).length
@@ -398,60 +562,25 @@
         ? todayReviewWords().length
         : satWords.filter(word => word.level === Number(reviewFilter)).length;
     reviewSummary.textContent = reviewFilter === "due"
-      ? `今天有 ${totalInFilter} 个词到期。每次只显示一个，回答后自动进入下一个。`
+      ? `有 ${totalInFilter} 个词的预计记忆强度已经下降到复习点。每轮只取最容易遗忘的 ${Math.min(REVIEW_SESSION_LIMIT, totalInFilter)} 个，避免被积压数量压垮。`
       : reviewFilter === "today"
-        ? `今天新背的单词中有 ${totalInFilter} 个尚未达到熟悉度 5；升到 L5 后会自动离开这个队列。`
-      : `正在连续复习熟悉度 ${reviewFilter}；点击“记得”会立即升级，点击“忘记”会降低一级并缩短间隔。`;
-    reviewSessionProgress.textContent = `本轮 ${reviewSessionCount} 词 · 升级 ${reviewSessionPromoted} 词 · 剩余 ${candidates.length}`;
+        ? `今天新背且未达到 L5 的 ${totalInFilter} 个词会在原句中重新激活，防止短期印象在今晚消失。`
+        : `正在处理熟悉度 ${reviewFilter}：先用原句测试语境义，再根据“只认得意思 / 能还原场景”调整稳定期。`;
+    reviewSessionProgress.textContent = `本轮 ${reviewSessionCount} 词 · 语境义答对 ${reviewSessionCorrect} 词 · 稳定升级 ${reviewSessionPromoted} 词 · 剩余 ${candidates.length}`;
     reviewQueue.innerHTML = "";
     if (!candidates.length) {
-      reviewQueue.innerHTML = `<div class="review-session-complete"><span>✦</span><h3>${reviewSessionCount ? "这一轮完成了" : "这一组暂时没有单词"}</h3><p>${reviewSessionCount ? `你连续处理了 ${reviewSessionCount} 个词，其中 ${reviewSessionPromoted} 个成功升级。` : "可以选择其他熟悉度，或切换到到期复习。"}</p><button type="button" class="secondary-button" id="restart-review-session">再来一轮</button></div>`;
+      reviewQueue.innerHTML = `<div class="review-session-complete"><span>✦</span><h3>${reviewSessionCount ? "这一轮语境已重新点亮" : "这一组暂时没有到期场景"}</h3><p>${reviewSessionCount ? `你重新激活了 ${reviewSessionCount} 个词的使用场景，语境义答对 ${reviewSessionCorrect} 个，其中 ${reviewSessionPromoted} 个延长了记忆稳定期。` : "可以选择其他熟悉度，或回到到期队列。"}</p><button type="button" class="secondary-button" id="restart-review-session">${reviewSessionCount >= REVIEW_SESSION_LIMIT ? "继续下一轮 20 词" : "再来一轮"}</button></div>`;
       document.getElementById("restart-review-session")?.addEventListener("click", () => {
         reviewSeen = new Set();
         reviewSessionCount = 0;
         reviewSessionPromoted = 0;
+        reviewSessionCorrect = 0;
         reviewFeedback.textContent = "新一轮开始。";
         renderReview();
       });
       return;
     }
-    const word = candidates[0];
-    const oldLevel = Number(word.level) || 1;
-    const card = document.createElement("article");
-    card.className = "review-card review-focus-card";
-    card.tabIndex = 0;
-    card.innerHTML = `
-      <div class="review-card-header"><h3></h3><span class="review-level-badge"></span></div>
-      <p class="review-group"></p>
-      <div class="review-prompt"><span>先在脑中回忆中文意思和英文解释</span><small>空格：显示答案 · ←：忘记 · →：记得</small></div>
-      <div class="review-answer" hidden><strong class="review-zh"></strong><p class="review-definition"></p><blockquote class="review-example"></blockquote></div>
-      <button class="reveal-review" type="button">显示答案</button>
-      <div class="review-actions"><button class="forgot" type="button">忘记 · ${oldLevel > 1 ? `降到 L${oldLevel - 1}` : "留在 L1"}</button><button class="skip-review" type="button">暂时跳过</button><button class="remembered" type="button">记得 · ${oldLevel < 5 ? `升到 L${oldLevel + 1}` : "保持 L5"}</button></div>`;
-    card.querySelector("h3").textContent = word.id;
-    card.querySelector(".review-level-badge").textContent = `LEVEL ${word.level}`;
-    card.querySelector(".review-group").textContent = `${word.group} · 词性 ${word.pos || "未知"}`;
-    card.querySelector(".review-zh").textContent = word.zh;
-    card.querySelector(".review-definition").textContent = word.definition;
-    card.querySelector(".review-example").textContent = word.example;
-    const answer = card.querySelector(".review-answer");
-    const reveal = () => {
-      answer.hidden = false;
-      card.querySelector(".reveal-review").hidden = true;
-    };
-    card.querySelector(".reveal-review").addEventListener("click", reveal);
-    card.querySelector(".forgot").addEventListener("click", () => updateWordLevel(word, false));
-    card.querySelector(".remembered").addEventListener("click", () => updateWordLevel(word, true));
-    card.querySelector(".skip-review").addEventListener("click", () => {
-      reviewSeen.add(word.id);
-      reviewFeedback.textContent = `已暂时跳过 ${word.id}，熟悉度没有改变。`;
-      renderReview();
-    });
-    card.addEventListener("keydown", event => {
-      if (event.key === " ") { event.preventDefault(); reveal(); }
-      if (event.key === "ArrowLeft") { event.preventDefault(); updateWordLevel(word, false); }
-      if (event.key === "ArrowRight") { event.preventDefault(); updateWordLevel(word, true); }
-    });
-    reviewQueue.append(card);
+    renderContextReviewCard(candidates[0]);
   }
 
   function adaptiveReadingCandidates() {
@@ -513,6 +642,7 @@
   });
   nextReviewReading?.addEventListener("click", () => renderAdaptiveReading(true));
   window.addEventListener("lexiverse-study-complete", () => {
+    refreshIntroducedIds();
     if (reviewFilter === "today") renderReview();
     else renderLevelFilters();
   });
@@ -522,6 +652,7 @@
     if (!word) return;
     word.level = Number(event.detail.level);
     levelStore[word.id] = word.level;
+    introducedIds.add(word.id);
     renderReview();
     renderAdaptiveReading();
     updatePoolStatus();

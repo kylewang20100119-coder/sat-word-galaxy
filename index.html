@@ -4,11 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="SAT + GRE Word Galaxy - 用星系关系图记忆高频高难词汇">
+  <meta name="theme-color" content="#07111d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Lexiverse">
   <title>SAT + GRE Word Galaxy</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/lexiverse-192.png">
+  <link rel="apple-touch-icon" href="icons/lexiverse-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=Manrope:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20260716-guided-nav-confusables">
+  <link rel="stylesheet" href="styles.css?v=20260718-context-memory-cycle1">
 </head>
 <body>
   <div class="app-shell">
@@ -30,6 +37,9 @@
         <button id="random-word" class="icon-button" type="button" aria-label="随机漫游" title="随机漫游">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
         </button>
+        <button id="install-app" class="icon-button install-app-button" type="button" aria-label="安装 Lexiverse 到设备" title="安装到设备">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg>
+        </button>
         <button id="theme-toggle" class="icon-button" type="button" aria-label="切换主题" title="切换主题">
           <svg class="moon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/></svg>
           <svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>
@@ -50,8 +60,8 @@
         <a href="#word-detail" data-section-link="word-detail"><i>02</i><span><strong>单词资料</strong><small>释义、词源与词族</small></span></a>
         <a href="#group-study" data-section-link="group-study"><i>03</i><span><strong>Group 背词</strong><small>顺序学习与阅读</small></span></a>
         <a href="#confusable-study" data-section-link="confusable-study"><i>04</i><span><strong>易混辨析</strong><small>语境二选一</small></span></a>
-        <a href="#reading-history" data-section-link="reading-history"><i>05</i><span><strong>阅读记录</strong><small>二刷与三刷轨迹</small></span></a>
-        <a href="#study-dashboard" data-section-link="study-dashboard"><i>06</i><span><strong>学习仪表盘</strong><small>进度、勋章与数据</small></span></a>
+        <a href="#reading-history" data-section-link="reading-history"><i>05</i><span><strong>阅读记录</strong><small>三刷结构轨迹</small></span></a>
+        <a href="#study-dashboard" data-section-link="study-dashboard"><i>06</i><span><strong>学习仪表盘</strong><small>进度、XP 兑换与勋章</small></span></a>
         <a href="#prep-lab" data-section-link="prep-lab"><i>07</i><span><strong>DSAT 训练</strong><small>离线仿真题库</small></span></a>
         <a href="#review-system" data-section-link="review-system"><i>08</i><span><strong>智能复习</strong><small>按熟悉度巩固</small></span></a>
         <a href="#scope-panel" data-section-link="scope-panel"><i>09</i><span><strong>范围筛选</strong><small>创建专属词库</small></span></a>
@@ -111,9 +121,9 @@
         <div class="section-heading">
           <div>
             <p class="eyebrow"><span></span> GROUP STUDY PATH</p>
-            <h2 id="group-study-title">按 Group 顺序背词与原文反应训练</h2>
+            <h2 id="group-study-title">按 Group 分三遍建立长期记忆</h2>
           </div>
-          <p>第一遍按原表顺序逐词学习；第二、三遍把同一 Group 随机拆成 3 / 3 / 4，并生成三篇覆盖全部目标词的 DSAT 风格短阅读。</p>
+            <p>第一遍完整认识单词；第二遍用意思、例句、同反义词与同源词建立关系网；第三遍把同一 Group 按语义拆成 3 / 3 / 4，用三篇完整短文覆盖全部单词，每篇只做一道 DSAT 风格题。</p>
         </div>
         <div class="group-study-toolbar">
           <label for="study-group-select">当前分组<select id="study-group-select"></select></label>
@@ -123,12 +133,27 @@
           </div>
           <p id="study-group-progress" aria-live="polite"></p>
         </div>
-        <div class="group-study-grid">
+        <div class="study-pass-selector" role="group" aria-label="选择当前刷词遍数">
+          <button type="button" data-study-pass="1" aria-pressed="false"><i>I</i><span><strong>第一遍 · 完整认识</strong><small>释义、例句、语义关系和词源</small></span><b id="study-pass-one-progress">0 / 10</b></button>
+          <button type="button" data-study-pass="2" aria-pressed="false"><i>II</i><span><strong>第二遍 · 关系稳固</strong><small>例句、同反义词与同源词</small></span><b id="study-pass-two-progress">0 / 10</b></button>
+          <button type="button" data-study-pass="3" aria-pressed="false"><i>III</i><span><strong>第三遍 · 结构阅读</strong><small>骨架 → 转折 → DSAT 题目</small></span><b id="study-pass-three-progress">0 / 10</b></button>
+        </div>
+        <p id="study-pass-resume" class="study-pass-resume" aria-live="polite"></p>
+        <section id="smart-route" class="smart-route" aria-labelledby="smart-route-title">
+          <div class="smart-route-orbit" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div class="smart-route-heading">
+            <div><p class="eyebrow"><span></span> ADAPTIVE DAILY ROUTE</p><h3 id="smart-route-title">今天最值得做什么</h3><p id="smart-route-reason">正在根据你的熟悉度、到期复习和今日进度计算路线。</p></div>
+            <button id="smart-route-start" class="primary-button" type="button">开始推荐任务</button>
+          </div>
+          <div id="smart-route-metrics" class="smart-route-metrics" aria-live="polite"></div>
+          <div id="smart-route-steps" class="smart-route-steps" aria-label="今日学习路线"></div>
+        </section>
+        <div id="group-study-grid" class="group-study-grid">
           <article class="sequence-study-card">
-            <div class="sequence-heading"><span>第一遍 · 顺序背词</span><strong id="study-word-position"></strong></div>
+            <div class="sequence-heading"><span id="study-pass-heading">第一遍 · 完整认识</span><strong id="study-word-position"></strong></div>
             <div class="study-reward-bar" aria-live="polite">
-              <span><small>连击</small><strong id="study-combo">0</strong></span>
-              <span><small>总能量</small><strong id="study-xp">0 XP</strong></span>
+              <span><small>今日连击</small><strong id="study-combo">0</strong></span>
+              <span><small>累计 / 可用</small><strong id="study-xp">0 / 0 XP</strong></span>
               <div><small>今日目标</small><strong id="study-daily-goal">0 / 100</strong><i><b id="study-daily-fill"></b></i></div>
             </div>
             <p id="study-reward-message" class="study-reward-message">从今天的第一个词开始点亮星系。</p>
@@ -149,6 +174,8 @@
               <div><span>本轮沉浸冲刺</span><strong id="study-sprint-count">0 / 10</strong></div>
               <i><b id="study-sprint-fill"></b></i>
               <p id="study-next-preview">完成评级后自动进入下一词</p>
+              <small id="study-recall-summary">二刷每 5 词触发一次主动回忆检查</small>
+              <small id="study-rescue-summary" class="study-rescue-summary">记忆救援队列为空</small>
             </div>
             <div id="study-word-card" class="study-word-card" aria-live="polite"></div>
             <div id="study-word-strip" class="study-word-strip" aria-label="本组单词顺序"></div>
@@ -157,15 +184,11 @@
               <button id="study-next-word" class="secondary-button" type="button">下一个</button>
             </div>
           </article>
-          <div class="group-reading-panel">
+          <div id="group-reading-panel" class="group-reading-panel">
             <div class="group-reading-heading">
-              <div><span>第二 / 三遍 · DSAT 原文反应</span><p id="study-split-summary"></p></div>
+              <div><span>第三遍 · DSAT 结构阅读</span><p id="study-split-summary"></p></div>
               <div class="reading-heading-actions">
-                <div class="reading-pass-toggle" role="group" aria-label="选择刷词轮次">
-                  <button type="button" data-reading-pass="2" aria-pressed="true">二刷 · 重点高亮</button>
-                  <button type="button" data-reading-pass="3" aria-pressed="false">三刷 · 原文直读</button>
-                </div>
-                <button id="reshuffle-group-readings" class="secondary-button" type="button">重新随机拆分</button>
+                <button id="reshuffle-group-readings" class="secondary-button" type="button">恢复固定语义分组</button>
               </div>
             </div>
             <div id="group-reading-list" class="group-reading-list" aria-live="polite"></div>
@@ -174,7 +197,7 @@
         <section id="confusable-study" class="confusable-study" aria-label="易混词对比背诵"></section>
         <section id="reading-history" class="group-reading-history-panel" aria-labelledby="group-reading-history-title">
           <div class="reading-history-heading">
-            <div><p class="eyebrow"><span></span> THIRD-PASS LOG</p><h3 id="group-reading-history-title">原文反应训练记录</h3></div>
+            <div><p class="eyebrow"><span></span> THIRD-PASS LOG</p><h3 id="group-reading-history-title">结构阅读训练记录</h3></div>
             <div class="reading-history-filters" role="group" aria-label="筛选阅读记录">
               <button type="button" data-reading-history-filter="current" aria-pressed="true">当前 Group</button>
               <button type="button" data-reading-history-filter="all" aria-pressed="false">全部记录</button>
@@ -200,7 +223,46 @@
               <button id="progress-import-undo" class="secondary-button" type="button" hidden>撤销上次导入</button>
             </div>
           </div>
+          <section id="progress-vault" class="progress-vault" aria-labelledby="progress-vault-title">
+            <div class="progress-vault-copy">
+              <p class="eyebrow"><span></span> LOCAL PROGRESS VAULT</p>
+              <h4 id="progress-vault-title">把整片学习星系带到另一台设备</h4>
+              <p>一键备份熟悉度、三遍进度、XP、连击、错题、阅读与易混词记录。文件只在你的浏览器里生成和读取，不会上传到服务器。</p>
+              <div id="progress-vault-summary" class="progress-vault-summary" aria-live="polite"></div>
+            </div>
+            <div class="progress-vault-actions">
+              <input id="progress-vault-file" type="file" accept=".json,application/json" hidden>
+              <button id="progress-vault-export" class="primary-button" type="button">下载完整备份</button>
+              <button id="progress-vault-select" class="secondary-button" type="button">从备份恢复</button>
+              <button id="progress-vault-undo" class="secondary-button" type="button" hidden>撤销上次恢复</button>
+              <button id="progress-vault-onboarding" class="vault-text-button" type="button">重新查看使用导引</button>
+            </div>
+            <div id="progress-vault-preview" class="progress-vault-preview" hidden aria-live="polite">
+              <div>
+                <strong id="progress-vault-preview-title">备份内容</strong>
+                <p id="progress-vault-preview-detail"></p>
+              </div>
+              <div>
+                <button id="progress-vault-apply" class="primary-button" type="button">确认恢复并刷新</button>
+                <button id="progress-vault-cancel" class="secondary-button" type="button">取消</button>
+              </div>
+            </div>
+            <p id="progress-vault-status" class="progress-vault-status" aria-live="polite"></p>
+          </section>
           <div id="study-stat-cards" class="study-stat-cards" aria-live="polite"></div>
+          <section class="xp-reward-shop" aria-labelledby="xp-reward-shop-title">
+            <div class="xp-reward-heading">
+              <div><p class="eyebrow"><span></span> XP REWARD DOCK</p><h4 id="xp-reward-shop-title">把努力兑换成真正的休息</h4><p>兑换只消耗可用 XP，不会降低累计 XP、段位或已经解锁的勋章。</p></div>
+              <div class="xp-wallet"><span>可兑换余额</span><strong id="xp-available-balance">0 XP</strong><small id="xp-spent-summary">累计消费 0 XP</small></div>
+            </div>
+            <div id="xp-reward-options" class="xp-reward-options" aria-live="polite"></div>
+            <div id="xp-rest-session" class="xp-rest-session" hidden aria-live="polite"></div>
+            <div class="xp-reward-footer">
+              <div><strong>XP 里程碑提醒</strong><span>每跨过一次设定值，只弹出一次，不会因刷新重复。</span></div>
+              <label for="xp-alert-step">提醒间隔<select id="xp-alert-step"><option value="100">每 100 XP</option><option value="250">每 250 XP</option><option value="500">每 500 XP</option><option value="1000">每 1000 XP</option></select></label>
+              <p id="xp-reward-history"></p>
+            </div>
+          </section>
           <section id="study-pass-journey" class="study-pass-journey" aria-label="单词多遍掌握路线"></section>
           <section class="badge-cabinet" aria-labelledby="badge-cabinet-title">
             <div class="badge-cabinet-heading"><div><strong id="badge-cabinet-title">我的星系勋章</strong><span>真实学习行为自动解锁，刷新或重启不会丢失</span></div><small id="badge-progress"></small></div>
@@ -208,12 +270,17 @@
           </section>
           <div class="study-overall-progress"><div><span>SAT WordBank 总进度</span><strong id="study-overall-label"></strong></div><div class="study-progress-track"><i id="study-progress-fill"></i></div></div>
           <div class="group-progress-heading">
-            <div><strong>Group 进度与熟悉度地图</strong><span>每张卡片同时显示已背数量、熟悉度均值和 L1–L5 分布</span></div>
+            <div><strong>Group 三遍进度与熟悉度地图</strong><span>三遍学习分别记录；熟悉度 L1–L5 作为独立维度显示</span></div>
             <div class="group-progress-filters" role="group" aria-label="筛选 Group 学习进度">
               <button type="button" data-group-progress-filter="all" aria-pressed="true">全部</button>
               <button type="button" data-group-progress-filter="active" aria-pressed="false">进行中</button>
-              <button type="button" data-group-progress-filter="complete" aria-pressed="false">已完成</button>
+              <button type="button" data-group-progress-filter="pass1" aria-pressed="false">停在一刷</button>
+              <button type="button" data-group-progress-filter="pass2" aria-pressed="false">停在二刷</button>
+              <button type="button" data-group-progress-filter="pass3" aria-pressed="false">三刷完成</button>
             </div>
+          </div>
+          <div class="group-pass-legend" aria-label="三遍学习颜色图例">
+            <span class="pass-one"><i>I</i>完整认识</span><span class="pass-two"><i>II</i>例句与词义关系</span><span class="pass-three"><i>III</i>DSAT 语境阅读</span>
           </div>
           <div class="group-level-legend" aria-label="熟悉度颜色图例">
             <span class="level-1"><i></i>L1 陌生</span><span class="level-2"><i></i>L2 模糊</span><span class="level-3"><i></i>L3 尚可</span><span class="level-4"><i></i>L4 掌握</span><span class="level-5"><i></i>L5 熟练</span>
@@ -221,6 +288,62 @@
           <div id="group-progress-grid" class="group-progress-grid" aria-live="polite"></div>
         </section>
       </section>
+      <div id="xp-game-alert" class="xp-game-alert" hidden>
+        <section role="alertdialog" aria-modal="true" aria-labelledby="xp-game-alert-title" aria-describedby="xp-game-alert-message">
+          <button id="xp-game-alert-close" type="button" aria-label="关闭奖励提醒">×</button>
+          <i id="xp-game-alert-icon">XP</i>
+          <span id="xp-game-alert-kicker">MILESTONE REACHED</span>
+          <h3 id="xp-game-alert-title">新的 XP 里程碑</h3>
+          <p id="xp-game-alert-message"></p>
+          <button id="xp-game-alert-confirm" class="primary-button" type="button">收下奖励，继续前进</button>
+        </section>
+      </div>
+      <div id="xp-rest-overlay" class="xp-rest-overlay" hidden>
+        <section role="timer" aria-live="off" aria-labelledby="xp-rest-overlay-title">
+          <div class="xp-rest-orbit" aria-hidden="true"><i></i><i></i><i></i></div>
+          <span class="xp-rest-kicker">FOCUS RECOVERY IN PROGRESS</span>
+          <h3 id="xp-rest-overlay-title">休息舱运行中</h3>
+          <div id="xp-rest-countdown" class="xp-rest-countdown"><strong id="xp-rest-countdown-value">05:00</strong><small>距离返回学习</small></div>
+          <p id="xp-rest-overlay-message">离开屏幕、喝水、活动一下。倒计时结束后立即回到学习轨道。</p>
+          <div class="xp-rest-overlay-progress"><i id="xp-rest-overlay-progress-fill"></i></div>
+          <div class="xp-rest-overlay-meta"><span id="xp-rest-overlay-reward"></span><span id="xp-rest-overlay-end-time"></span></div>
+          <button id="xp-rest-overlay-end" class="secondary-button" type="button">提前结束休息，立即回来背词</button>
+        </section>
+      </div>
+
+      <div id="welcome-guide" class="welcome-guide" hidden>
+        <section role="dialog" aria-modal="true" aria-labelledby="welcome-guide-title" aria-describedby="welcome-guide-description">
+          <button id="welcome-guide-close" class="welcome-guide-close" type="button" aria-label="关闭使用导引">×</button>
+          <div class="welcome-guide-visual" aria-hidden="true">
+            <i></i><i></i><i></i><i></i><strong>LEXI<br>VERSE</strong>
+          </div>
+          <div class="welcome-guide-content">
+            <span id="welcome-guide-kicker">WELCOME · 1 / 3</span>
+            <h2 id="welcome-guide-title">先让系统替你决定今天背什么</h2>
+            <p id="welcome-guide-description">点击“带我开始”，系统会根据弱词、到期复习和当前 Group 自动安排最值得做的一小步。</p>
+            <div id="welcome-guide-dots" class="welcome-guide-dots" aria-label="导引进度"></div>
+            <div class="welcome-guide-actions">
+              <button id="welcome-guide-back" class="secondary-button" type="button">上一步</button>
+              <button id="welcome-guide-next" class="primary-button" type="button">下一步</button>
+            </div>
+            <button id="welcome-guide-skip" class="welcome-guide-skip" type="button">跳过导引</button>
+          </div>
+        </section>
+      </div>
+
+      <div id="install-app-dialog" class="install-app-dialog" hidden>
+        <section role="dialog" aria-modal="true" aria-labelledby="install-app-title" aria-describedby="install-app-description">
+          <button id="install-app-close" class="install-app-close" type="button" aria-label="关闭安装说明">×</button>
+          <img src="icons/lexiverse-192.png" alt="" width="88" height="88">
+          <span id="install-app-kicker">INSTALL LEXIVERSE</span>
+          <h2 id="install-app-title">把单词星系装进你的设备</h2>
+          <p id="install-app-description">安装后可以从主屏幕独立启动；首次完整加载后，核心词库与学习功能可以离线使用。</p>
+          <ol id="install-app-steps"></ol>
+          <div class="install-app-notice"><i></i><span>学习数据仍保存在这台设备。跨设备请使用“进度保险箱”导出与恢复。</span></div>
+          <button id="install-app-confirm" class="primary-button" type="button">知道了</button>
+        </section>
+      </div>
+      <p id="app-network-status" class="app-network-status" hidden aria-live="polite"></p>
 
       <section id="prep-lab" class="prep-lab" aria-labelledby="prep-title">
         <div class="section-heading">
@@ -290,13 +413,13 @@
         <div class="section-heading review-heading">
           <div>
             <p class="eyebrow"><span></span> SMART REVIEW</p>
-            <h2 id="review-title">按熟悉度安排复习</h2>
+            <h2 id="review-title">对抗遗忘的语境复习</h2>
           </div>
-          <p id="review-summary-text">优先处理陌生词，并根据“记得 / 忘记”自动安排下次复习。</p>
+          <p id="review-summary-text">在原句的语气和场景中重新激活单词，并按记忆稳定度安排下一次出现。</p>
         </div>
         <div id="review-levels" class="review-levels" role="group" aria-label="按熟悉度筛选"></div>
         <div class="review-session-status">
-          <div><strong id="review-session-progress">本轮 0 词</strong><span>先看释义，再判断记得或忘记</span></div>
+          <div><strong id="review-session-progress">本轮 0 词</strong><span>先读场景，再判断词义和它在句中的作用</span></div>
           <p id="review-feedback" aria-live="polite">选择一个熟悉度开始连续复习。</p>
         </div>
         <div class="review-workspace">
@@ -337,16 +460,25 @@
   <script src="words.js"></script>
   <script src="wordbank.js"></script>
   <script src="gre.js"></script>
+  <script src="lexical-senses.js?v=20260716-multi-pos-senses"></script>
   <script src="lexical-expansion.js?v=20260716-group-word-families"></script>
-  <script src="confusables.js?v=20260716-confusable-study"></script>
+  <script src="gre-expansion-2.js?v=20260717-high-value-gre-34"></script>
+  <script src="confusables.js?v=20260716-confusable-bank-136"></script>
   <script src="progress-store.js?v=20260716-word-pass-count"></script>
-  <script src="app.js?v=20260716-word-pass-count"></script>
-  <script src="group-study.js?v=20260716-game-system-2"></script>
-  <script src="confusable-study.js?v=20260716-context-quiz"></script>
+  <script src="app.js?v=20260717-shared-spherical-polyhedron-morph2"></script>
+  <script src="architect-readings.js?v=20260718-sat-architect3"></script>
+  <script src="architect-passage-overrides.js?v=20260718-sat-architect3"></script>
+  <script src="architect-reading-engine.js?v=20260718-sat-architect3"></script>
+  <script src="answer-layout.js?v=20260718-answer-layout1"></script>
+  <script src="group-study.js?v=20260718-sat-architect4"></script>
+  <script src="confusable-study.js?v=20260716-confusable-bank-stats-136"></script>
   <script src="offline-questions.js?v=20260714-full-target-coverage"></script>
   <script src="generated-questions.js?v=20260714-full-target-coverage"></script>
   <script src="review-readings.js?v=20260715-curated-weak-word-readings"></script>
-  <script src="prep.js?v=20260716-word-pass-count"></script>
-  <script src="section-nav.js?v=20260716-guided-nav"></script>
+  <script src="prep.js?v=20260718-context-memory-cycle1"></script>
+  <script src="section-nav.js?v=20260716-side-nav-highlight7"></script>
+  <script src="smart-route.js?v=20260718-context-memory-cycle1"></script>
+  <script src="progress-vault.js?v=20260718-context-memory-cycle1"></script>
+  <script src="pwa.js?v=20260717-installable-offline1"></script>
 </body>
 </html>

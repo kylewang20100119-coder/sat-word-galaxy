@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "python3 -m http.server ${PORT:-8000}",
-    "dev:api": "python3 server.py"
+    "dev:api": "python3 server.py",
+    "test": "node --test answer-layout.test.mjs",
+    "audit:readings": "node validate-architect-readings.mjs",
+    "audit:readings:complete": "node validate-architect-readings.mjs --complete"
   }
 }

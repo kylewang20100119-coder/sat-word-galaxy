@@ -19,6 +19,11 @@
       .trim();
   }
 
+  function passageContainsWord(passage, id) {
+    const escaped = String(id).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^a-z])${escaped}([^a-z]|$)`, "i").test(String(passage || ""));
+  }
+
   function categoryFor(word) {
     const text = `${word.id} ${word.definition}`.toLowerCase();
     const categories = [
@@ -255,8 +260,20 @@
     };
   });
 
+  const eligibleById = new Map(eligible.map(word => [word.id, word]));
+  const coveredGenerated = generated.map(question => {
+    const missing = (question.targets || []).filter(id => !passageContainsWord(question.passage, id));
+    if (!missing.length) return question;
+    const terms = missing.map(id => {
+      const definition = eligibleById.get(id)?.conciseDefinition || "a distinct contextual quality";
+      return `${id} (“${definition}”)`;
+    });
+    const appendix = ` In nearby annotations, the scholar separately identifies ${terms.join(", ")}; these labels are treated as precise distinctions rather than interchangeable decoration.`;
+    return { ...question, passage: `${question.passage}${appendix}` };
+  });
+
   if (generated.length !== EXTRA_QUESTION_COUNT) {
     console.warn(`Lexiverse generated ${generated.length} expansion questions instead of ${EXTRA_QUESTION_COUNT}.`);
   }
-  window.OFFLINE_SAT_QUESTIONS = [...existing, ...generated];
+  window.OFFLINE_SAT_QUESTIONS = [...existing, ...coveredGenerated];
 })();

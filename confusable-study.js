@@ -138,7 +138,7 @@
     root.innerHTML = `
       <div class="confusable-heading">
         <div><p class="eyebrow"><span></span> CONFUSABLE PAIRS</p><h3>易混词语境辨析</h3><p>先抓住核心边界，再在真实语境中二选一。答完才揭晓解析，让你不是“看懂了”，而是真的能分清。</p></div>
-        <div class="confusable-stats"><span><strong>${masteredCount}</strong><small>已分清</small></span><span><strong>${todayCount}</strong><small>今日练习</small></span><span><strong>${matches.length}</strong><small>本组匹配</small></span></div>
+        <div class="confusable-stats"><span><strong>${masteredCount}</strong><small>已分清</small></span><span><strong>${todayCount}</strong><small>今日练习</small></span><span><strong>${matches.length}</strong><small>本组匹配</small></span><span><strong>${pairs.length}</strong><small>词库总量</small></span></div>
       </div>
       <div class="confusable-toolbar">
         <div role="group" aria-label="筛选易混词对">
